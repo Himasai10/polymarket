@@ -5,13 +5,13 @@
 See: .planning/PROJECT.md (updated 2026-02-13)
 
 **Core value:** The bot must consistently make profitable trades with real money on Polymarket
-**Current focus:** Phase 5 COMPLETE — All 5 phases of v1 implemented and tested
+**Current focus:** Phase 6 — Full codebase audit COMPLETE, bug fixes NOT YET STARTED
 
 ## Current Status
 
-**Stage:** Phase 5 - COMPLETE (v1 DONE)
-**Last action:** Implemented Docker deployment, HTTP health endpoint, production log rotation, and 23 deployment tests.
-**Next action:** Configure real whale wallets, deploy to VPS, and begin live paper trading.
+**Stage:** Phase 6 - AUDIT COMPLETE, FIXES PENDING
+**Last action:** Comprehensive 4-part codebase audit completed. ~12 CRITICAL, ~25 HIGH, ~25 MEDIUM, ~15 LOW issues documented in AUDIT.md. No code changes made yet.
+**Next action:** Apply all fixes from AUDIT.md using the 16-step fix plan. Start with Step 1 (client.py).
 
 ## What's Been Done
 
@@ -69,15 +69,15 @@ See: .planning/PROJECT.md (updated 2026-02-13)
 
 ## What's Left
 
-### v1 is COMPLETE — All 43 requirements implemented across 5 phases
+### Phase 6: Bug Fixes from Audit (see AUDIT.md for full details)
 
-**Pre-deployment checklist (manual):**
-1. Configure real whale wallets in `config/wallets.yaml`
-2. Set up `.env` with real Polymarket API keys
-3. Set up Telegram bot via @BotFather
-4. Deploy to VPS: `cd docker && docker-compose up -d`
-5. Monitor via Telegram commands and `/health` endpoint
-6. Start in paper mode, validate, then switch to live
+All fixes documented in `AUDIT.md` — 16-step plan covering:
+- 12 CRITICAL issues (must fix before live trading)
+- 25+ HIGH issues (should fix before live trading)
+- 25+ MEDIUM issues (fix for robustness)
+- 15+ LOW issues (nice to have)
+
+**No code fixes have been applied yet.** Start with Step 1 (client.py).
 
 ### Deferred to v2:
 - AI prediction engine (`src/ai/` stub exists)
@@ -89,17 +89,12 @@ See: .planning/PROJECT.md (updated 2026-02-13)
 
 To continue from where we left off:
 
-```bash
-cd /Users/himasaitummala/polymarket-bot
-# 175 tests passing (Phase 1 through Phase 5)
-uv run pytest tests/ -v  # Verify
-
-# ALL PHASES COMPLETE — v1 is ready for deployment
-# To deploy:
-#   1. Copy config/.env.example to .env and fill in credentials
-#   2. Edit config/wallets.yaml with real whale addresses
-#   3. cd docker && docker-compose up -d
-#   4. Monitor: curl http://localhost:8080/health
+```
+We're building a Polymarket automated trading bot. A full codebase audit was completed
+and documented in AUDIT.md. No fixes have been applied yet. The repo is at the latest
+commit on main. Read AUDIT.md for the complete bug list and 16-step fix plan, then start
+fixing all critical and high-severity bugs using the GSD framework — fix fast, fix right,
+move on. Start with Step 1 (src/core/client.py) and work through all 16 steps sequentially.
 ```
 
 ## Files
@@ -130,6 +125,7 @@ uv run pytest tests/ -v  # Verify
 | docker/docker-compose.yml | **NEW** | Full deployment config |
 | src/monitoring/health_server.py | **NEW** | HTTP health endpoint |
 | tests/unit/test_deployment.py | **NEW** | 23 deployment tests |
+| AUDIT.md | **NEW** | Full codebase audit with 16-step fix plan |
 | tests/ | Updated | 175 total tests, all passing |
 
 ## Key Decisions Made
@@ -153,4 +149,4 @@ uv run pytest tests/ -v  # Verify
 - **Docker Volumes**: Named volumes (not bind mounts) for data/logs — portable across VPS providers.
 
 ---
-*Last updated: 2026-02-14 — Phase 5 COMPLETE, v1 DONE, 175 tests passing*
+*Last updated: 2026-02-14 — Phase 6 AUDIT COMPLETE, fixes pending. See AUDIT.md.*
