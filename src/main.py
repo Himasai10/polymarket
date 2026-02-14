@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import signal
 import sys
+from datetime import datetime, timezone
 
 import structlog
 
@@ -31,8 +32,11 @@ from .execution.risk_manager import RiskManager
 from .monitoring.health import HealthChecker
 from .monitoring.logger import setup_logging
 from .monitoring.pnl import PnLTracker
+from .notifications.telegram import TelegramCommandBot, TelegramNotifier
 from .strategies.base import BaseStrategy
+from .strategies.arb_scanner import ArbScanner
 from .strategies.copy_trader import CopyTrader
+from .strategies.stink_bidder import StinkBidder
 
 logger = structlog.get_logger()
 
@@ -61,16 +65,27 @@ class TradingBot:
         self._ws = WebSocketManager(settings)
         self._rate_limiter = RateLimiter()
 
+        # Notifications
+        self._notifier = TelegramNotifier(settings)
+        self._command_bot = TelegramCommandBot(settings)
+
         # Execution
-        self._order_manager = OrderManager(self._client, self._db, self._rate_limiter)
+        self._order_manager = OrderManager(
+            self._client, self._db, self._rate_limiter, notifier=self._notifier
+        )
         self._risk_manager = RiskManager(self._strategy_config, self._db, self._wallet)
         self._position_manager = PositionManager(
-            self._strategy_config, self._db, self._order_manager
+            self._strategy_config,
+            self._db,
+            self._order_manager,
+            notifier=self._notifier,
         )
 
         # Monitoring
         self._pnl_tracker = PnLTracker(self._db, self._wallet)
-        self._health_checker = HealthChecker(self._client, self._db, self._wallet, self._ws)
+        self._health_checker = HealthChecker(
+            self._client, self._db, self._wallet, self._ws, notifier=self._notifier
+        )
 
         # Register strategies
         self._register_strategies()
@@ -112,6 +127,12 @@ class TradingBot:
             self._ws.subscribe(token_ids)
             logger.info("ws_subscribed_existing_positions", count=len(token_ids))
 
+        # 7. Initialize Telegram notifier
+        await self._notifier.initialize()
+
+        # 8. Set up command bot handlers
+        self._setup_command_handlers()
+
         logger.info("bot_initialized")
 
     def register_strategy(self, strategy: BaseStrategy) -> None:
@@ -136,6 +157,90 @@ class TradingBot:
             self.register_strategy(copy_trader)
         else:
             logger.info("strategy_disabled_in_config", strategy="copy_trader")
+
+        # Arb Scanner (Phase 4)
+        if self._strategy_config.is_strategy_enabled("arb_scanner"):
+            arb_scanner = ArbScanner(
+                client=self._client,
+                db=self._db,
+                order_manager=self._order_manager,
+                risk_manager=self._risk_manager,
+                strategy_config=self._strategy_config,
+                notifier=self._notifier,
+            )
+            self.register_strategy(arb_scanner)
+        else:
+            logger.info("strategy_disabled_in_config", strategy="arb_scanner")
+
+        # Stink Bidder (Phase 4)
+        if self._strategy_config.is_strategy_enabled("stink_bidder"):
+            stink_bidder = StinkBidder(
+                client=self._client,
+                db=self._db,
+                order_manager=self._order_manager,
+                risk_manager=self._risk_manager,
+                strategy_config=self._strategy_config,
+                notifier=self._notifier,
+            )
+            self.register_strategy(stink_bidder)
+        else:
+            logger.info("strategy_disabled_in_config", strategy="stink_bidder")
+
+    def _setup_command_handlers(self) -> None:
+        """Wire command bot handlers to TradingBot methods."""
+
+        async def get_status_text() -> str:
+            status = await self.get_status()
+            lines = [
+                "<b>Bot Status</b>",
+                f"Mode: {status['mode']}",
+                f"Portfolio: ${status['portfolio']['value']:,.2f}",
+                f"Daily Return: {status['portfolio']['daily_return_pct']:+.2f}%",
+                f"Open Positions: {status['portfolio']['open_positions']}",
+                f"Health: {status['health']['overall']}",
+            ]
+            if status["strategies"]:
+                lines.append("Strategies:")
+                for s in status["strategies"]:
+                    lines.append(f"  • {s['name']}: {s.get('status', 'unknown')}")
+            return "\n".join(lines)
+
+        def get_pnl_text() -> str:
+            return self._pnl_tracker.format_summary()
+
+        async def do_kill() -> str:
+            self._risk_manager.activate_kill_switch()
+            await self._order_manager.cancel_all()
+            await self._notifier.alert_kill_switch(activated_by="telegram")
+            return "<b>KILL SWITCH ACTIVATED</b>\nAll orders cancelled. Trading halted."
+
+        def do_pause(strategy_name: str | None) -> str:
+            paused = []
+            for s in self._strategies:
+                if strategy_name is None or s.name == strategy_name:
+                    s.pause()
+                    paused.append(s.name)
+            if paused:
+                return f"<b>Paused:</b> {', '.join(paused)}"
+            return f"<b>No matching strategy:</b> {strategy_name}"
+
+        def do_resume(strategy_name: str | None) -> str:
+            resumed = []
+            for s in self._strategies:
+                if strategy_name is None or s.name == strategy_name:
+                    s.resume()
+                    resumed.append(s.name)
+            if resumed:
+                return f"<b>Resumed:</b> {', '.join(resumed)}"
+            return f"<b>No matching strategy:</b> {strategy_name}"
+
+        self._command_bot.set_handlers(
+            get_status=get_status_text,
+            get_pnl=get_pnl_text,
+            do_kill=do_kill,
+            do_pause=do_pause,
+            do_resume=do_resume,
+        )
 
     async def start(self) -> None:
         """Start all components and run until shutdown."""
@@ -163,6 +268,26 @@ class TradingBot:
         # Start health check loop
         health_task = asyncio.create_task(self._health_loop())
         tasks.append(health_task)
+
+        # Start Telegram notifier send loop
+        if self._notifier.is_enabled:
+            telegram_task = asyncio.create_task(self._notifier.start())
+            tasks.append(telegram_task)
+            logger.info("telegram_notifier_started")
+
+        # Start Telegram command bot
+        if self._command_bot.is_enabled:
+            cmd_task = asyncio.create_task(self._command_bot.start())
+            tasks.append(cmd_task)
+            logger.info("telegram_command_bot_started")
+
+        # Start daily P&L summary loop
+        pnl_summary_task = asyncio.create_task(self._daily_pnl_summary_loop())
+        tasks.append(pnl_summary_task)
+
+        # Start market resolution polling loop
+        resolution_task = asyncio.create_task(self._market_resolution_loop())
+        tasks.append(resolution_task)
 
         logger.info(
             "bot_started",
@@ -214,10 +339,14 @@ class TradingBot:
         except Exception:
             logger.exception("final_pnl_snapshot_error")
 
-        # 6. Close API client
+        # 6. Stop Telegram components
+        await self._notifier.stop()
+        await self._command_bot.stop()
+
+        # 7. Close API client
         await self._client.close()
 
-        # 7. Close database last
+        # 8. Close database last
         self._db.close()
 
         logger.info("bot_shutdown_complete")
@@ -279,6 +408,18 @@ class TradingBot:
                         overall=health.overall.value,
                         components={c.name: c.status.value for c in health.components},
                     )
+                    # Send Telegram alert for system degradation (TG-08)
+                    if self._notifier.is_enabled:
+                        degraded = [
+                            f"{c.name}: {c.status.value}"
+                            for c in health.components
+                            if c.status.value != "healthy"
+                        ]
+                        await self._notifier.alert_system(
+                            title="System Health Degraded",
+                            message="\n".join(degraded),
+                            level="warning",
+                        )
             except Exception:
                 logger.exception("health_check_error")
 
@@ -286,6 +427,62 @@ class TradingBot:
                 await asyncio.wait_for(
                     self._shutdown_event.wait(),
                     timeout=60.0,  # Every minute
+                )
+                break
+            except asyncio.TimeoutError:
+                continue
+
+    async def _daily_pnl_summary_loop(self) -> None:
+        """Send daily P&L summary via Telegram at UTC midnight."""
+        from datetime import timedelta
+
+        while not self._shutdown_event.is_set():
+            now = datetime.now(timezone.utc)
+            # Calculate time until next midnight UTC
+            midnight = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
+            next_midnight = midnight + timedelta(days=1)
+            seconds_until = (next_midnight - now).total_seconds()
+
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=seconds_until,
+                )
+                break  # Shutdown requested
+            except asyncio.TimeoutError:
+                # Send daily P&L summary
+                if self._notifier.is_enabled:
+                    summary = self._pnl_tracker.format_summary()
+                    await self._notifier.alert_daily_pnl(summary)
+                    logger.info("daily_pnl_summary_sent")
+
+    async def _market_resolution_loop(self) -> None:
+        """Periodically poll for resolved markets and close positions."""
+        while not self._shutdown_event.is_set():
+            try:
+                # Get all open markets with positions
+                positions = self._db.get_open_positions()
+                market_ids = {p["market_id"] for p in positions}
+
+                for market_id in market_ids:
+                    # Check if market is resolved via API
+                    market = await self._client.get_market(market_id)
+                    if market and getattr(market, "resolved", False):
+                        outcome = market.get("resolution", market.get("winning_outcome", ""))
+                        logger.info(
+                            "market_resolved",
+                            market_id=market_id,
+                            outcome=outcome,
+                        )
+                        self._position_manager.check_market_resolution(market_id, outcome)
+
+            except Exception:
+                logger.exception("market_resolution_check_error")
+
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=300.0,  # Check every 5 minutes
                 )
                 break
             except asyncio.TimeoutError:

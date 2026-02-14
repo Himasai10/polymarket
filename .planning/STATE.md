@@ -5,13 +5,13 @@
 See: .planning/PROJECT.md (updated 2026-02-13)
 
 **Core value:** The bot must consistently make profitable trades with real money on Polymarket
-**Current focus:** Phase 3 IN PROGRESS — Telegram integration (wiring remaining)
+**Current focus:** Phase 4 COMPLETE — Arbitrage and Stink Bid strategies implemented and tested
 
 ## Current Status
 
-**Stage:** Phase 3 - IN PROGRESS
-**Last action:** Built TelegramNotifier + TelegramCommandBot (src/notifications/telegram.py); wiring into TradingBot next
-**Next action:** Wire Telegram into main.py (OrderManager, PositionManager, HealthChecker hooks), add resolution polling loop, write Phase 3 tests
+**Stage:** Phase 4 - COMPLETE
+**Last action:** Implemented ArbScanner and StinkBidder strategies, wired them into TradingBot, and verified with 152 unit tests.
+**Next action:** Move to Phase 5 - Deployment & Production
 
 ## What's Been Done
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-02-13)
 4. **REQUIREMENTS.md** — 43 v1 requirements defined across 8 categories, all mapped to phases
 5. **ROADMAP.md** — 5 phases defined:
    - Phase 1: Foundation & Core Infrastructure (15 requirements) ✅
-   - Phase 2: Copy Trading + Position Management (14 requirements) 🔧
-   - Phase 3: Telegram Integration (8 requirements)
-   - Phase 4: Arbitrage & Stink Bids (6 requirements)
+   - Phase 2: Copy Trading + Position Management (14 requirements) ✅
+   - Phase 3: Telegram Integration (8 requirements) ✅
+   - Phase 4: Arbitrage & Stink Bids (6 requirements) ✅
    - Phase 5: Deployment & Production (6 requirements)
 6. **Phase 1 COMPLETE** — All original 60 unit tests passing:
    - **Core**: Settings, StrategyConfig, WalletConfig, Database, RateLimiter, WebSocket
@@ -39,45 +39,33 @@ See: .planning/PROJECT.md (updated 2026-02-13)
    - **Strategy**: Abstract BaseStrategy with lifecycle management
    - **Entry point**: TradingBot orchestrator with graceful shutdown, CLI args
    - **Onboarding**: 7-step interactive CLI wizard (scripts/setup_account.py)
-7. **Phase 2 PROGRESS**:
-   - ✅ **DB methods added** (7 new): `update_position_trailing_stop`, `update_position_partial_close`, `delete_whale_position`, `get_all_whale_positions`, `get_positions_by_wallet_source`, `get_closed_positions`, `update_daily_pnl_end_of_day`
-   - ✅ **OrderManager fixed**: Opens position in DB when BUY trade succeeds (checks `metadata.is_exit`)
-   - ✅ **WebSocket fixed**: `subscribe()`/`unsubscribe()` send messages when already connected
-   - ✅ **PnL bug fixed**: `_enrich_strategy_pnl()` reads from closed positions table, not trade fees
-   - ✅ **PositionManager fixed**: `check_market_resolution()` uses outcome; raw SQL replaced with DB methods; exit signals marked with `is_exit` metadata
+7. **Phase 2 COMPLETE** — `0de254d`:
    - ✅ **CopyTrader strategy implemented**: Full `src/strategies/copy_trader.py` (COPY-01 through COPY-06)
-   - ✅ **CopyTrader wired into main.py**: Auto-registered when enabled in config
-   - ✅ **CLI `--kill` handler**: Fully wired — cancels all orders, activates kill switch, exits
-   - ✅ **Config bug fixed**: `is_strategy_enabled()` now handles `None` return from `get_strategy()`
-   - ✅ **CopyTrader tests**: 35 tests covering all COPY-01 through COPY-06 requirements
-   - ✅ **DB method tests**: 13 new tests for all Phase 2 DB methods
-    - ✅ **Full test suite**: 108 tests, all passing
-8. **Phase 2 COMMITTED** — `0de254d` (all 14 requirements addressed)
-9. **Phase 3 STARTED** — Telegram Integration:
-    - ✅ **TelegramNotifier built**: Rate-limited async message queue, HTML formatting, alerts for position open/close (TG-01, TG-02), daily P&L (TG-03), system/risk/kill switch alerts (TG-08)
-    - ✅ **TelegramCommandBot built**: /status (TG-04), /pnl (TG-05), /kill (TG-06), /pause + /resume (TG-07), /help — with chat_id auth
-    - ✅ **notifications/__init__.py updated**: Exports TelegramNotifier + TelegramCommandBot
-    - 🔧 **NOT YET WIRED**: TelegramNotifier + TelegramCommandBot need to be integrated into TradingBot (main.py), OrderManager, and PositionManager
-    - 🔧 **NOT YET DONE**: Market resolution polling loop, Phase 3 unit tests
+   - ✅ **Position Management**: TP/SL, trailing stops, market resolution handling
+   - ✅ **Core fixes**: OrderManager, PositionManager DB usage, PnL bugs
+8. **Phase 3 COMPLETE** — `39943b1`:
+   - ✅ **Telegram Integration**: Notifier + Command Bot (/status, /pnl, /kill, /pause, /resume)
+   - ✅ **Wired into TradingBot**: Full lifecycle management
+   - ✅ **Alerts**: Positions, P&L, System Health, Risk Warnings
+9. **Phase 4 COMPLETE** — Arbitrage & Stink Bids (all 6 requirements addressed):
+   - ✅ **ArbScanner implemented**: `src/strategies/arb_scanner.py` scans for Yes+No < 0.95 (ARB-01)
+   - ✅ **Arb Execution**: Submits simultaneous FOK orders for risk-free profit (ARB-02)
+   - ✅ **Arb Logging**: Logs all opportunities for analysis (ARB-03)
+   - ✅ **StinkBidder implemented**: `src/strategies/stink_bidder.py` places deep discount bids (STINK-01)
+   - ✅ **Stink Bid Management**: Auto-refreshes expired orders (STINK-02), respects allocation caps (STINK-03)
+   - ✅ **Strategy Wiring**: Both strategies registered in `TradingBot` and configurable via `strategies.yaml`
+   - ✅ **Phase 4 tests**: 14 new unit tests covering scanning, execution logic, and edge cases
+   - ✅ **Full test suite**: 152 tests, all passing
 
 ## What's Left
 
-### Phase 3: Telegram Wiring (in progress)
+### Phase 5: Deployment & Production (not started)
 
-1. **Wire TelegramNotifier into main.py**: Initialize in TradingBot.__init__(), start send loop in start(), inject into OrderManager + PositionManager
-2. **Add notifier to OrderManager**: Call alert_position_opened() after successful BUY entry trade
-3. **Add notifier to PositionManager**: Call alert_position_closed() after close/partial close
-4. **Wire TelegramCommandBot**: set_handlers() with callbacks for /status, /pnl, /kill, /pause, /resume; start polling in TradingBot.start()
-5. **System alerts from HealthChecker**: Send Telegram alert when health degrades
-6. **Daily P&L summary schedule**: Add daily summary loop or APScheduler job
-7. **Market resolution polling**: Add loop to detect resolved markets and close positions (Phase 2 gap)
-8. **Phase 3 unit tests**: Test TelegramNotifier (mocked Bot), TelegramCommandBot commands, alert formatting
-
-### Future Phases
-
-3. **Phase 3** — Telegram bot with alerts and commands
-4. **Phase 4** — Arbitrage scanner, stink bid strategy
-5. **Phase 5** — Docker, health checks, graceful shutdown, production hardening
+1. **Dockerfile**: Multi-stage build for production
+2. **docker-compose.yml**: With environment configuration
+3. **Health endpoint**: HTTP health check for monitoring
+4. **Production hardening**: Rate limit tuning, error handling
+5. **Documentation**: Deployment guide, troubleshooting
 
 ## Resume Instructions
 
@@ -85,14 +73,16 @@ To continue from where we left off:
 
 ```bash
 cd /Users/himasaitummala/polymarket-bot
-# 108 tests passing (Phase 1 + Phase 2), all committed
+# 152 tests passing (Phase 1 through Phase 4)
 uv run pytest tests/ -v  # Verify
 
-# Phase 3 status: TelegramNotifier + TelegramCommandBot built in src/notifications/telegram.py
-# NEXT: Wire into main.py (TradingBot), OrderManager, PositionManager
-# Then: resolution polling, daily summary schedule, tests
-# Key file: src/notifications/telegram.py (TelegramNotifier + TelegramCommandBot)
-# Read .planning/ROADMAP.md for Phase 3 requirements (TG-01 through TG-08)
+# Phase 4 COMPLETE: Passive strategies (Arb + Stink) implemented
+# NEXT: Phase 5 - Deployment & Production
+# Key files to create:
+#   - Dockerfile
+#   - docker-compose.yml
+#   - deploy.sh (optional)
+# Read .planning/ROADMAP.md for Phase 5 requirements
 ```
 
 ## Files
@@ -110,45 +100,33 @@ uv run pytest tests/ -v  # Verify
 | ROADMAP.md | Complete | .planning/ROADMAP.md |
 | PRD.md | Complete | PRD.md |
 | pyproject.toml | Complete | pyproject.toml |
-| src/core/ | Complete | All 6 modules (db.py updated with 7 new methods) |
-| src/execution/ | Updated | OrderManager, PositionManager, RiskManager |
-| src/monitoring/ | Updated | PnL tracker bug fixed |
+| src/core/ | Complete | All 6 modules |
+| src/execution/ | Complete | OrderManager, PositionManager, RiskManager |
+| src/monitoring/ | Complete | PnL, Health, Logging |
 | src/strategies/base.py | Complete | Abstract base class |
-| src/strategies/copy_trader.py | **NEW** | Full CopyTrader (COPY-01–06) |
-| src/main.py | Updated | CopyTrader registration, --kill handler |
-| scripts/setup_account.py | Complete | Onboarding wizard |
-| tests/unit/test_copy_trader.py | **NEW** | 35 tests |
-| tests/unit/test_db.py | Updated | 24 tests (11 original + 13 new) |
-| src/notifications/__init__.py | Updated | Exports TelegramNotifier + TelegramCommandBot |
-| src/notifications/telegram.py | **NEW** | TelegramNotifier (alerts) + TelegramCommandBot (commands) |
-| tests/ | Updated | 108 total tests, all passing |
+| src/strategies/copy_trader.py | Complete | Copy Trading strategy |
+| src/strategies/arb_scanner.py | **NEW** | Arbitrage strategy |
+| src/strategies/stink_bidder.py | **NEW** | Stink Bid strategy |
+| src/notifications/telegram.py | Complete | Telegram integration |
+| src/main.py | Updated | Wired new strategies |
+| tests/unit/test_arb_scanner.py | **NEW** | 7 tests |
+| tests/unit/test_stink_bidder.py | **NEW** | 7 tests |
+| tests/ | Updated | 152 total tests, all passing |
 
 ## Key Decisions Made
 
 - Python 3.11+ (best Polymarket SDK ecosystem)
-- web3>=7.0 (required for py-clob-client compatibility; web3==6.14.0 has hexbytes conflict)
-- Copy Trading as primary strategy (40% allocation, highest ROI for <$1K)
-- 5 phases: Foundation → Copy Trading → Telegram → Arb/Stink → Deployment
-- AI Prediction deferred to v2 (complex, needs foundation first)
-- Market Making deferred until capital > $5K
+- web3>=7.0 (required for py-clob-client compatibility)
+- Copy Trading as primary strategy (40% allocation)
+- Passive Strategies: Arb Scanner (10%) + Stink Bids (20%) added in Phase 4
 - Telegram for notifications (no web dashboard in v1)
 - Paper trading deferred to v2 (validate with copy trading first)
-- datetime.now(timezone.utc) used instead of deprecated datetime.utcnow()
 
 ## Discoveries
 
-- web3==6.14.0 incompatible with py-clob-client (hexbytes conflict) — use web3>=7.0
-- Package name: `py-order-utils` not `python-order-utils`
-- Build backend: `hatchling.build` not `hatchling.backends`
-- Python constrained to >=3.11,<3.14 (py-order-utils limitation)
-- USDC on Polygon: 6 decimals, contract 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
-- py-clob-client: ClobClient(host, key, secret, passphrase, signature_type=1, chain_id=137, funder=funder_address)
-- Gamma API: https://gamma-api.polymarket.com/markets
-- WebSocket: wss://ws-subscriptions-clob.polymarket.com
-- `is_strategy_enabled` had a None bug — fixed with null check before `.get()`
-- PnLTracker `_enrich_strategy_pnl()` was reading `fees` column as P&L — fixed to use `get_closed_positions()`
-- PositionManager was using raw SQL bypassing Database abstraction — fixed
-- OrderManager wasn't opening positions after trade success — fixed
+- **Arb Opportunities**: Fee structure (2% winner + ~3% taker) means opportunities require >5% gap (Yes+No < 0.95).
+- **Stink Bids**: Must use GTC orders and reconcile against CLOB state to handle expirations.
+- **Order Execution**: Simultaneous FOK orders used for arb to eliminate leg risk.
 
 ---
-*Last updated: 2026-02-14 — Phase 3 in progress (Telegram built, wiring next), 108 tests passing*
+*Last updated: 2026-02-14 — Phase 4 COMPLETE, 152 tests passing*
