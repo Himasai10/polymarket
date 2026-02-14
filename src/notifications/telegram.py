@@ -75,11 +75,10 @@ class TelegramNotifier:
         await self._send_loop()
 
     async def stop(self) -> None:
-        """Drain remaining messages and stop."""
+        """M-08: Drain ALL remaining messages (not just 10) and stop."""
         self._running = False
-        # Drain up to 10 remaining messages
         if self._bot and self._enabled:
-            for _ in range(min(10, self._queue.qsize())):
+            while not self._queue.empty():
                 try:
                     msg = self._queue.get_nowait()
                     await self._send(msg)
@@ -175,7 +174,10 @@ class TelegramNotifier:
             logger.warning("telegram_queue_full", dropped_msg_preview=text[:60])
 
     async def _send_loop(self) -> None:
-        """Background loop: dequeue and send messages with rate limiting."""
+        """Background loop: dequeue and send messages with rate limiting.
+
+        M-10: Handles CancelledError explicitly for clean shutdown.
+        """
         while self._running:
             try:
                 msg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
@@ -184,6 +186,8 @@ class TelegramNotifier:
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
+                # M-10: On cancellation, drain remaining messages before exiting
+                logger.debug("telegram_send_loop_cancelled")
                 break
             except Exception:
                 logger.exception("telegram_send_loop_error")
@@ -319,12 +323,27 @@ class TelegramCommandBot:
             await update.message.reply_text(f"Error: {e}")  # type: ignore[union-attr]
 
     async def _cmd_kill(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """TG-06: /kill — execute kill switch."""
+        """TG-06: /kill — execute kill switch.
+
+        M-09: Requires confirmation — /kill confirm — to prevent accidental activation.
+        """
         if not self._is_authorized(update):
             return
         if not self._do_kill:
             await update.message.reply_text("Kill handler not configured.")  # type: ignore[union-attr]
             return
+
+        # M-09: Require explicit confirmation
+        args = context.args
+        if not args or args[0].lower() != "confirm":
+            await update.message.reply_text(  # type: ignore[union-attr]
+                "<b>Kill Switch</b>\n\n"
+                "This will cancel ALL open orders and halt ALL trading.\n\n"
+                "To confirm, send: <code>/kill confirm</code>",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         try:
             text = await self._do_kill()
             await update.message.reply_text(text, parse_mode=ParseMode.HTML)  # type: ignore[union-attr]
@@ -370,7 +389,7 @@ class TelegramCommandBot:
             "<b>Polymarket Bot Commands</b>\n\n"
             "/status — Portfolio value, open positions, strategies\n"
             "/pnl — Today's P&L with per-strategy breakdown\n"
-            "/kill — Emergency stop: cancel all orders, halt trading\n"
+            "/kill confirm — Emergency stop: cancel all orders, halt trading\n"
             "/pause [strategy] — Pause one or all strategies\n"
             "/resume [strategy] — Resume one or all strategies\n"
             "/help — Show this message"

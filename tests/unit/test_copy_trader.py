@@ -392,19 +392,21 @@ class TestCopyTraderDetection:
 class TestCopyTraderSizing:
     """Tests for trade size calculation."""
 
-    def test_fixed_sizing(self, copy_trader: CopyTrader):
+    @pytest.mark.asyncio
+    async def test_fixed_sizing(self, copy_trader: CopyTrader):
         """Fixed sizing returns configured fixed_size_usd."""
         copy_trader._sizing_method = "fixed"
         copy_trader._fixed_size_usd = 75.0
 
-        size = copy_trader._calculate_trade_size(
+        size = await copy_trader._calculate_trade_size(
             whale_size_usd=5000.0,
             max_allocation=10000.0,
             address="0xtest",
         )
         assert size == 75.0
 
-    def test_portfolio_pct_sizing(
+    @pytest.mark.asyncio
+    async def test_portfolio_pct_sizing(
         self, copy_trader: CopyTrader, mock_wallet_manager: MagicMock, db: Database
     ):
         """Portfolio % sizing uses USDC balance + open position value."""
@@ -414,43 +416,46 @@ class TestCopyTraderSizing:
         # Wallet has $1000 USDC, no open positions
         mock_wallet_manager.get_usdc_balance.return_value = 1000.0
 
-        size = copy_trader._calculate_trade_size(
+        size = await copy_trader._calculate_trade_size(
             whale_size_usd=5000.0,
             max_allocation=10000.0,
             address="0xtest",
         )
         assert size == 100.0  # 10% of 1000
 
-    def test_whale_pct_sizing(self, copy_trader: CopyTrader):
+    @pytest.mark.asyncio
+    async def test_whale_pct_sizing(self, copy_trader: CopyTrader):
         """Whale % sizing takes a percentage of the whale's position."""
         copy_trader._sizing_method = "whale_pct"
         copy_trader._whale_pct = 5.0
 
-        size = copy_trader._calculate_trade_size(
+        size = await copy_trader._calculate_trade_size(
             whale_size_usd=10000.0,
             max_allocation=10000.0,
             address="0xtest",
         )
         assert size == 500.0  # 5% of 10000
 
-    def test_unknown_sizing_falls_back_to_fixed(self, copy_trader: CopyTrader):
+    @pytest.mark.asyncio
+    async def test_unknown_sizing_falls_back_to_fixed(self, copy_trader: CopyTrader):
         """Unknown sizing method falls back to fixed."""
         copy_trader._sizing_method = "unknown_method"
         copy_trader._fixed_size_usd = 42.0
 
-        size = copy_trader._calculate_trade_size(
+        size = await copy_trader._calculate_trade_size(
             whale_size_usd=5000.0,
             max_allocation=10000.0,
             address="0xtest",
         )
         assert size == 42.0
 
-    def test_size_below_min_returns_zero(self, copy_trader: CopyTrader):
+    @pytest.mark.asyncio
+    async def test_size_below_min_returns_zero(self, copy_trader: CopyTrader):
         """If calculated size is below min_position_size_usd, return 0."""
         copy_trader._sizing_method = "fixed"
         copy_trader._fixed_size_usd = 2.0  # Below min of 5
 
-        size = copy_trader._calculate_trade_size(
+        size = await copy_trader._calculate_trade_size(
             whale_size_usd=5000.0,
             max_allocation=10000.0,
             address="0xtest",
@@ -692,7 +697,7 @@ class TestCopyTraderSignalContent:
         assert "source_wallet" in sig.metadata
         assert "source_wallet_name" in sig.metadata
         assert "whale_entry_price" in sig.metadata
-        assert "whale_size_usd" in sig.metadata
+        assert "whale_current_value_usd" in sig.metadata
         assert sig.metadata["source_wallet_name"] == "BigWhale"
 
     @pytest.mark.asyncio

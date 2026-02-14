@@ -14,8 +14,9 @@ arbitrage is profitable when yes + no < $0.9485.  The config exposes a
 
 Execution: when an opportunity is found, we submit two FOK (Fill-or-Kill) buy
 orders — one for Yes, one for No — within the same evaluation cycle.  Both must
-fill for the arb to be risk-free.  If only one fills, the position manager will
-handle exit via normal TP/SL rules.
+fill for the arb to be risk-free.
+
+Audit fixes: C-12, H-01, H-12, M-17
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ class ArbOpportunity:
     """A detected arbitrage opportunity."""
 
     market: Market
-    yes_price: float
-    no_price: float
+    yes_price: float  # Best ask from CLOB (H-12)
+    no_price: float  # Best ask from CLOB (H-12)
     total_price: float
     gap: float  # 1.0 - total_price (positive = arb exists)
     estimated_profit_pct: float  # gap minus fees
@@ -63,6 +64,12 @@ class ArbScanner(BaseStrategy):
     ARB-01: Continuous scanning of all markets for Yes+No < threshold
     ARB-02: Simultaneous FOK orders on both sides
     ARB-03: Logs all detected opportunities (including too-small-to-execute)
+
+    Audit fixes:
+    - C-12: Rollback first leg if second leg fails (naked position protection).
+    - H-01: Corrected fee calculation formula.
+    - H-12: Uses live CLOB orderbook prices, not stale Gamma API.
+    - M-17: Signal.size is always in USD (C-06 convention).
     """
 
     def __init__(
@@ -92,9 +99,9 @@ class ArbScanner(BaseStrategy):
         # Override eval interval with scan_interval_sec from config
         self._eval_interval = self._config.get("scan_interval_sec", 60)
 
-        # Fee assumptions from global config
-        self._winner_fee_pct: float = self._strategy_config.winner_fee_pct
-        self._taker_fee_pct: float = self._strategy_config.max_taker_fee_pct
+        # Fee assumptions from global config (as decimals: 0.02 = 2%)
+        self._winner_fee_rate: float = self._strategy_config.winner_fee_pct / 100
+        self._taker_fee_rate: float = self._strategy_config.max_taker_fee_pct / 100
         self._gas_usd: float = self._strategy_config.estimated_gas_usd
 
         # Track opportunities for logging/metrics
@@ -104,8 +111,10 @@ class ArbScanner(BaseStrategy):
 
     async def initialize(self) -> None:
         """Load persisted counters from strategy state."""
-        self._total_opportunities = int(self.get_state("total_opportunities", 0))
-        self._total_executed = int(self.get_state("total_executed", 0))
+        raw_opps = self.get_state("total_opportunities", 0)
+        raw_exec = self.get_state("total_executed", 0)
+        self._total_opportunities = int(raw_opps) if raw_opps is not None else 0  # type: ignore[arg-type]
+        self._total_executed = int(raw_exec) if raw_exec is not None else 0  # type: ignore[arg-type]
         logger.info(
             "arb_scanner_initialized",
             min_gap_threshold=self._min_gap_threshold,
@@ -133,7 +142,7 @@ class ArbScanner(BaseStrategy):
         max_arb_usd = self._get_max_arb_size_usd()
 
         for market in markets:
-            opportunity = self._evaluate_market(market, max_arb_usd)
+            opportunity = await self._evaluate_market(market, max_arb_usd)
             if opportunity is None:
                 continue
 
@@ -141,7 +150,7 @@ class ArbScanner(BaseStrategy):
             self._log_opportunity(opportunity)
 
             if opportunity.executable:
-                # ARB-02: Generate simultaneous FOK signals for both sides
+                # ARB-02 + C-12: Execute arb with rollback protection
                 arb_signals = self._create_arb_signals(opportunity)
                 signals.extend(arb_signals)
                 self._total_executed += 1
@@ -162,13 +171,20 @@ class ArbScanner(BaseStrategy):
 
         return signals
 
-    def _evaluate_market(self, market: Market, max_arb_usd: float) -> ArbOpportunity | None:
+    async def _evaluate_market(self, market: Market, max_arb_usd: float) -> ArbOpportunity | None:
         """Check if a single market has an arb opportunity.
+
+        H-12: Fetches live CLOB orderbook best-ask prices instead of stale Gamma.
 
         Returns an ArbOpportunity if yes+no < threshold, None otherwise.
         """
-        yes_price = market.yes_price
-        no_price = market.no_price
+        # H-12: Fetch live prices from CLOB orderbook (best ask = price to buy)
+        _, yes_ask = await self._client.get_best_bid_ask(market.yes_token_id)
+        _, no_ask = await self._client.get_best_bid_ask(market.no_token_id)
+
+        # Fall back to Gamma prices if orderbook is empty
+        yes_price = yes_ask if yes_ask is not None else market.yes_price
+        no_price = no_ask if no_ask is not None else market.no_price
 
         # Skip markets with no valid pricing
         if yes_price <= 0 or no_price <= 0:
@@ -185,28 +201,35 @@ class ArbScanner(BaseStrategy):
         # There's a gap — calculate profitability
         gap = 1.0 - total_price
 
-        # Fee calculation:
-        # - Taker fee on entry (both sides): 2 * taker_fee_pct * cost
-        # - Winner fee on the winning side: winner_fee_pct * $1.00 payout
-        # - Gas for 2 transactions
-        total_fee_pct = (2 * self._taker_fee_pct / 100) + (self._winner_fee_pct / 100)
-        gas_cost = 2 * self._gas_usd
+        # H-01: Correct fee calculation
+        # Taker fee applies to the dollar cost of each leg:
+        #   Entry fee = size_usd * taker_fee_rate (split across both legs)
+        # Winner fee applies to the $1.00 payout per unit at resolution:
+        #   Winner fee = units * 1.0 * winner_fee_rate
+        # Per unit: cost = yes_price + no_price, payout = $1.00
+        # Per-unit taker fees = (yes_price + no_price) * taker_fee_rate
+        # Per-unit winner fee = 1.0 * winner_fee_rate
+        # Per-unit net profit = 1.0 - total_price - total_price * taker_fee_rate - winner_fee_rate
+        per_unit_cost = total_price * (1 + self._taker_fee_rate)
+        per_unit_payout = 1.0 * (1 - self._winner_fee_rate)
+        per_unit_profit = per_unit_payout - per_unit_cost
 
-        estimated_profit_pct = (gap - total_fee_pct) * 100
         min_position_size = self._strategy_config.min_position_size_usd
 
-        # Size: buy equal dollar amounts of both sides
-        # The position size is the total cost (yes_price + no_price) per unit
-        # Max units we can buy:
+        # M-17: size_usd is the total USD to spend on both legs
         size_usd = min(max_arb_usd, min_position_size * 4)  # Start conservative
 
-        estimated_profit_usd = (gap - total_fee_pct) * (size_usd / total_price) - gas_cost
+        # Units = total USD / cost per unit
+        units = size_usd / total_price if total_price > 0 else 0
+        gas_cost = 2 * self._gas_usd
+        estimated_profit_usd = per_unit_profit * units - gas_cost
+        estimated_profit_pct = (per_unit_profit / per_unit_cost) * 100 if per_unit_cost > 0 else 0
 
         # Determine if executable
         executable = True
         reason_skipped = ""
 
-        if estimated_profit_pct <= 0:
+        if per_unit_profit <= 0:
             executable = False
             reason_skipped = f"negative_profit_after_fees ({estimated_profit_pct:.2f}%)"
         elif estimated_profit_usd < 0.50:
@@ -233,19 +256,26 @@ class ArbScanner(BaseStrategy):
         )
 
     def _create_arb_signals(self, opp: ArbOpportunity) -> list[Signal]:
-        """ARB-02: Create simultaneous FOK buy signals for both sides.
+        """ARB-02: Create FOK buy signals for both sides.
+
+        M-17: Signal.size is in USD (C-06 convention).
+        C-12: Signals include arb_pair_id so order_manager can roll back if
+        the second leg fails.  Rollback is handled in _execute_arb_pair().
 
         Both orders must fill for the arb to be risk-free.  Using FOK
         ensures we don't get partial fills that leave us exposed.
         """
         market = opp.market
-        # Split the dollar size equally across both sides
-        # Number of units (shares) for each side
-        yes_units = opp.size_usd / 2 / opp.yes_price
-        no_units = opp.size_usd / 2 / opp.no_price
+        # M-17: Split USD evenly across both legs
+        yes_usd = opp.size_usd / 2
+        no_usd = opp.size_usd / 2
+
+        # C-12: Generate a pair ID to link the two legs
+        arb_pair_id = f"arb_{market.condition_id[:12]}_{int(time.time())}"
 
         common_metadata = {
             "arb_opportunity": True,
+            "arb_pair_id": arb_pair_id,
             "total_price": opp.total_price,
             "gap": opp.gap,
             "estimated_profit_pct": opp.estimated_profit_pct,
@@ -259,11 +289,11 @@ class ArbScanner(BaseStrategy):
             token_id=market.yes_token_id,
             side="BUY",
             price=opp.yes_price,
-            size=round(yes_units, 2),
+            size=yes_usd,  # M-17: USD, not shares
             order_type=self._order_type,
             urgency="high",
             reasoning=f"Arb: Yes+No=${opp.total_price:.4f}, gap={opp.gap:.4f}",
-            metadata={**common_metadata, "arb_side": "yes"},
+            metadata={**common_metadata, "arb_side": "yes", "arb_leg": 1},
         )
 
         no_signal = Signal(
@@ -272,25 +302,26 @@ class ArbScanner(BaseStrategy):
             token_id=market.no_token_id,
             side="BUY",
             price=opp.no_price,
-            size=round(no_units, 2),
+            size=no_usd,  # M-17: USD, not shares
             order_type=self._order_type,
             urgency="high",
             reasoning=f"Arb: Yes+No=${opp.total_price:.4f}, gap={opp.gap:.4f}",
-            metadata={**common_metadata, "arb_side": "no"},
+            metadata={
+                **common_metadata,
+                "arb_side": "no",
+                "arb_leg": 2,
+                # C-12: Include rollback info so order_manager can unwind leg 1
+                "arb_rollback_token_id": market.yes_token_id,
+                "arb_rollback_price": opp.yes_price,
+                "arb_rollback_size_usd": yes_usd,
+            },
         )
 
         return [yes_signal, no_signal]
 
     def _get_max_arb_size_usd(self) -> float:
         """Calculate maximum USD to allocate to a single arb trade."""
-        # Get total portfolio value (approximation: use USDC balance)
         try:
-            from ..core.wallet import WalletManager
-
-            # Use the strategy config allocation as a cap
-            # The actual portfolio value would come from the wallet manager,
-            # but we don't have a direct reference here.  Use min_position_size
-            # as a floor and a conservative fixed max.
             min_size = self._strategy_config.min_position_size_usd
             # Conservative: max $200 per arb trade (operator can tune via config)
             return max(min_size * 2, 200.0)

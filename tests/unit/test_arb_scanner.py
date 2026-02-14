@@ -15,6 +15,7 @@ from src.strategies.arb_scanner import ArbScanner
 def mock_deps():
     client = MagicMock()
     client.get_markets = AsyncMock()
+    client.get_best_bid_ask = AsyncMock(return_value=(None, None))
 
     db = MagicMock(spec=Database)
     db.load_strategy_state.return_value = {}
@@ -109,9 +110,12 @@ class TestArbScanner:
     @pytest.mark.asyncio
     async def test_evaluate_opportunity_too_small_profit(self, scanner, mock_deps):
         # Yes + No = 0.94 (Gap = 0.06)
-        # Fees: (2 * 3.15%) + 2% = 8.3% fee load
-        # Wait, fee calc in code: (2 * taker) + winner = 2*3.15 + 2 = 8.3%
-        # Gap 6% - 8.3% fees = negative profit
+        # H-01 corrected fee math:
+        #   per_unit_cost = total_price * (1 + taker_fee_rate)
+        #   per_unit_payout = 1.0 * (1 - winner_fee_rate)
+        #   per_unit_profit = payout - cost
+        # With taker_fee_rate=5%: 0.94 * 1.05 = 0.987, payout = 0.98 → -0.007 (unprofitable)
+        scanner._taker_fee_rate = 0.05  # Override to 5% to make gap unprofitable
 
         market = Market(
             condition_id="123",

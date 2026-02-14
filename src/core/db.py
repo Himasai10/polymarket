@@ -2,15 +2,22 @@
 SQLite database for persisting trades, positions, and strategy state.
 
 Addresses: CORE-08
+
+Audit fixes applied:
+- H-18: INSERT OR IGNORE for trades (prevent overwriting history)
+- H-19: Transaction context manager for multi-step operations
+- M-03: Proper JSON extraction instead of LIKE for metadata queries
+- M-22: WAL mode + busy timeout for concurrent access
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 import structlog
 
@@ -33,6 +40,7 @@ class Database:
     def __init__(self, settings: Settings):
         self.db_path = settings.db_path
         self._conn: sqlite3.Connection | None = None
+        self._in_transaction: bool = False
 
     def initialize(self) -> None:
         """Create database and tables."""
@@ -41,9 +49,11 @@ class Database:
 
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
-        # WAL mode for better concurrent performance (Pitfall checklist)
+        # M-22 FIX: WAL mode for concurrent reads + busy timeout to avoid lock errors
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")  # Wait up to 5s for lock
+        self._conn.execute("PRAGMA synchronous=NORMAL")  # Good balance for WAL mode
 
         self._create_tables()
         logger.info("database_initialized", path=str(self.db_path))
@@ -130,6 +140,13 @@ class Database:
                 UNIQUE(wallet_address, market_id, token_id)
             );
 
+            -- Key-value metadata store (H-15: persist kill switch, etc.)
+            CREATE TABLE IF NOT EXISTS bot_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             -- Indexes for common queries
             CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
             CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
@@ -152,6 +169,36 @@ class Database:
             self._conn.close()
             logger.info("database_closed")
 
+    # H-19 FIX: Transaction context manager for multi-step operations
+    @contextmanager
+    def transaction(self) -> Generator[sqlite3.Connection, None, None]:
+        """Wrap multiple DB operations in an explicit transaction.
+
+        Usage:
+            with db.transaction() as conn:
+                db.record_trade(...)
+                db.open_position(...)
+            # COMMIT on success, ROLLBACK on exception
+
+        Individual methods skip their own commit() when inside a transaction.
+        """
+        conn = self.conn
+        conn.execute("BEGIN IMMEDIATE")
+        self._in_transaction = True
+        try:
+            yield conn
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._in_transaction = False
+
+    def _commit(self) -> None:
+        """Commit unless we're inside an explicit transaction (H-19)."""
+        if not self._in_transaction:
+            self.conn.commit()
+
     # ─── Trade Operations ─────────────────────────────────────────
 
     def record_trade(
@@ -167,10 +214,14 @@ class Database:
         reasoning: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> int:
-        """Record a new trade."""
+        """Record a new trade.
+
+        H-18 FIX: Uses INSERT OR IGNORE to prevent overwriting existing trades.
+        If a trade with the same order_id already exists, returns the existing row ID.
+        """
         now = _utcnow()
         cursor = self.conn.execute(
-            """INSERT OR REPLACE INTO trades
+            """INSERT OR IGNORE INTO trades
                (order_id, strategy, market_id, token_id, side, price, size,
                 order_type, status, reasoning, created_at, updated_at, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?)""",
@@ -189,7 +240,21 @@ class Database:
                 json.dumps(metadata) if metadata else None,
             ),
         )
-        self.conn.commit()
+        self._commit()
+
+        if cursor.rowcount == 0:
+            # Trade already existed — return existing row ID
+            row = self.conn.execute(
+                "SELECT id FROM trades WHERE order_id = ?", (order_id,)
+            ).fetchone()
+            existing_id = row["id"] if row else -1
+            logger.warning(
+                "trade_already_exists",
+                order_id=order_id,
+                existing_id=existing_id,
+            )
+            return existing_id
+
         logger.info(
             "trade_recorded",
             trade_id=cursor.lastrowid,
@@ -214,7 +279,7 @@ class Database:
             f"UPDATE trades SET {', '.join(sets)} WHERE order_id = ?",
             vals,
         )
-        self.conn.commit()
+        self._commit()
 
     def get_trades(
         self,
@@ -272,8 +337,20 @@ class Database:
                 json.dumps(metadata) if metadata else None,
             ),
         )
-        self.conn.commit()
+        self._commit()
         return cursor.lastrowid  # type: ignore
+
+    def set_position_closing(self, position_id: int, close_reason: str) -> None:
+        """Mark a position as 'closing' (exit order submitted, awaiting fill).
+
+        C-07: Intermediate state prevents the position from being treated as
+        fully closed before the exit order actually fills.
+        """
+        self.conn.execute(
+            "UPDATE positions SET status = 'closing', close_reason = ? WHERE id = ? AND status = 'open'",
+            (close_reason, position_id),
+        )
+        self._commit()
 
     def close_position(
         self,
@@ -281,15 +358,15 @@ class Database:
         realized_pnl: float,
         close_reason: str,
     ) -> None:
-        """Close a position."""
+        """Close a position (finalize after fill confirmation)."""
         now = _utcnow()
         self.conn.execute(
             """UPDATE positions
                SET status = 'closed', realized_pnl = ?, close_reason = ?, closed_at = ?
-               WHERE id = ?""",
+               WHERE id = ? AND status IN ('open', 'closing')""",
             (realized_pnl, close_reason, now, position_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def update_position_price(self, position_id: int, current_price: float) -> None:
         """Update current price and unrealized P&L for a position."""
@@ -314,7 +391,7 @@ class Database:
             "UPDATE positions SET current_price = ?, unrealized_pnl = ? WHERE id = ?",
             (current_price, unrealized_pnl, position_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def update_position_trailing_stop(self, position_id: int, trailing_stop_price: float) -> None:
         """Update the trailing stop price for a position."""
@@ -322,7 +399,7 @@ class Database:
             "UPDATE positions SET trailing_stop_price = ? WHERE id = ?",
             (trailing_stop_price, position_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def update_position_partial_close(
         self, position_id: int, remaining_size: float, take_profit_triggered: int
@@ -332,11 +409,11 @@ class Database:
             "UPDATE positions SET size = ?, take_profit_triggered = ? WHERE id = ?",
             (remaining_size, take_profit_triggered, position_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def get_open_positions(self, strategy: str | None = None) -> list[dict[str, Any]]:
-        """Get all open positions."""
-        query = "SELECT * FROM positions WHERE status = 'open'"
+        """Get all open or closing positions (both need price monitoring)."""
+        query = "SELECT * FROM positions WHERE status IN ('open', 'closing')"
         params: list[Any] = []
 
         if strategy:
@@ -348,9 +425,9 @@ class Database:
         return [dict(row) for row in rows]
 
     def count_open_positions(self) -> int:
-        """Count open positions (for risk limit checks)."""
+        """Count open/closing positions (for risk limit checks)."""
         row = self.conn.execute(
-            "SELECT COUNT(*) as cnt FROM positions WHERE status = 'open'"
+            "SELECT COUNT(*) as cnt FROM positions WHERE status IN ('open', 'closing')"
         ).fetchone()
         return row["cnt"] if row else 0
 
@@ -363,7 +440,7 @@ class Database:
                VALUES (?, ?)""",
             (date, starting_balance),
         )
-        self.conn.commit()
+        self._commit()
 
     def get_daily_pnl(self, date: str) -> dict[str, Any] | None:
         """Get P&L for a specific date."""
@@ -390,7 +467,7 @@ class Database:
                VALUES (?, ?, ?)""",
             (strategy, json.dumps(state), _utcnow()),
         )
-        self.conn.commit()
+        self._commit()
 
     def load_strategy_state(self, strategy: str) -> dict[str, Any] | None:
         """Load strategy state from last run."""
@@ -416,7 +493,7 @@ class Database:
                VALUES (?, ?, ?, ?, ?, ?)""",
             (wallet_address, market_id, token_id, size, avg_price, _utcnow()),
         )
-        self.conn.commit()
+        self._commit()
 
     def get_whale_positions(self, wallet_address: str) -> list[dict[str, Any]]:
         """Get stored positions for a whale wallet."""
@@ -433,7 +510,7 @@ class Database:
                WHERE wallet_address = ? AND market_id = ? AND token_id = ?""",
             (wallet_address, market_id, token_id),
         )
-        self.conn.commit()
+        self._commit()
 
     def get_all_whale_positions(self) -> list[dict[str, Any]]:
         """Get all stored whale positions across all wallets."""
@@ -445,13 +522,13 @@ class Database:
     def get_positions_by_wallet_source(self, wallet_address: str) -> list[dict[str, Any]]:
         """Get all positions opened due to copying a specific wallet.
 
-        Uses metadata JSON field 'source_wallet' to identify copy trades.
+        M-03 FIX: Uses json_extract() instead of LIKE for reliable JSON queries.
         """
         rows = self.conn.execute(
             """SELECT * FROM positions
-               WHERE metadata LIKE ?
+               WHERE json_extract(metadata, '$.source_wallet') = ?
                ORDER BY opened_at DESC""",
-            (f'%"source_wallet": "{wallet_address}"%',),
+            (wallet_address,),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -500,4 +577,25 @@ class Database:
                 date_str,
             ),
         )
-        self.conn.commit()
+        self._commit()
+
+    # ─── Bot Metadata (key-value store, H-15) ─────────────────────
+
+    def set_metadata(self, key: str, value: str) -> None:
+        """Upsert a metadata key-value pair."""
+        now = _utcnow()
+        self.conn.execute(
+            """INSERT INTO bot_metadata (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+            (key, value, now),
+        )
+        self._commit()
+
+    def get_metadata(self, key: str) -> str | None:
+        """Get a metadata value by key, or None if not found."""
+        row = self.conn.execute(
+            "SELECT value FROM bot_metadata WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return row["value"] if row else None

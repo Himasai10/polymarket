@@ -42,8 +42,13 @@ class TestRateLimiter:
         limiter = RateLimiter(max_requests=10, window_seconds=60.0)
         limiter.record_rate_limit()
         assert limiter._consecutive_rate_limits == 1
+        # H-17: requires 3 consecutive successes to reset (not 1)
         limiter.record_success()
-        assert limiter._consecutive_rate_limits == 0
+        assert limiter._consecutive_rate_limits == 1  # Not yet reset
+        limiter.record_success()
+        assert limiter._consecutive_rate_limits == 1  # Still not reset
+        limiter.record_success()
+        assert limiter._consecutive_rate_limits == 0  # Reset after 3 consecutive successes
 
     def test_record_rate_limit_increments(self):
         limiter = RateLimiter(max_requests=10, window_seconds=60.0)

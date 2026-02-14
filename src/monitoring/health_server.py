@@ -156,14 +156,21 @@ class HealthServer:
         status_code: int,
         body: dict,
     ) -> None:
-        """Send an HTTP response."""
-        body_json = json.dumps(body, default=str)
-        if status_code == 200:
-            response = _HTTP_200.format(length=len(body_json), body=body_json)
-        elif status_code == 503:
-            response = _HTTP_503.format(length=len(body_json), body=body_json)
-        else:
-            response = _HTTP_404.format(length=len(body_json), body=body_json)
+        """Send an HTTP response.
 
-        writer.write(response.encode("utf-8"))
+        M-07: Uses byte length for Content-Length (not char length).
+        """
+        body_json = json.dumps(body, default=str)
+        body_bytes = body_json.encode("utf-8")
+        content_length = len(body_bytes)
+        if status_code == 200:
+            header = _HTTP_200.format(length=content_length, body="")
+        elif status_code == 503:
+            header = _HTTP_503.format(length=content_length, body="")
+        else:
+            header = _HTTP_404.format(length=content_length, body="")
+
+        # Write header bytes + body bytes separately to ensure correct length
+        writer.write(header.encode("utf-8"))
+        writer.write(body_bytes)
         await writer.drain()

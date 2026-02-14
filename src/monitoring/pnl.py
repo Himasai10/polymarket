@@ -2,12 +2,16 @@
 
 Computes portfolio value, daily P&L, per-strategy P&L, and generates summaries
 for logging and Telegram reporting.
+
+Audit fixes applied:
+- M-06: Use UTC dates consistently (not local time)
+- M-11: Track total fees paid in P&L snapshot
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import structlog
 
@@ -29,6 +33,7 @@ class PnLSnapshot:
     realized_pnl_today: float
     daily_return_pct: float
     open_position_count: int
+    total_fees_today: float = 0.0  # M-11: Track fees paid today
     per_strategy: dict[str, StrategyPnL] = field(default_factory=dict)
 
 
@@ -66,8 +71,11 @@ class PnLTracker:
         self._starting_balance: float | None = None
 
     async def initialize(self) -> None:
-        """Load or set today's starting balance."""
-        today = date.today().isoformat()
+        """Load or set today's starting balance.
+
+        M-06: Uses UTC date consistently.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         daily = self._db.get_daily_pnl(today)
         if daily:
             self._starting_balance = daily["starting_balance"]
@@ -120,6 +128,15 @@ class PnLTracker:
         # Add realized P&L from closed trades today
         realized_today = self._db.get_today_realized_pnl()
 
+        # M-11: Sum fees from today's filled trades
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_trades = self._db.get_trades(status="filled", limit=500)
+        total_fees_today = sum(
+            t.get("fees", 0.0) or 0.0
+            for t in today_trades
+            if (t.get("created_at") or "").startswith(today_str)
+        )
+
         # Compute daily return
         portfolio_value = usdc_balance + positions_value
         starting = self._starting_balance or portfolio_value
@@ -139,6 +156,7 @@ class PnLTracker:
             realized_pnl_today=realized_today,
             daily_return_pct=round(daily_return_pct, 4),
             open_position_count=len(positions),
+            total_fees_today=total_fees_today,
             per_strategy=per_strategy,
         )
 
@@ -146,7 +164,7 @@ class PnLTracker:
         """Add realized P&L and win/loss counts from today's closed positions."""
         # Use closed positions (not trades) for accurate realized P&L
         closed_positions = self._db.get_closed_positions(limit=500)
-        today = date.today().isoformat()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # M-06: UTC date
 
         for pos in closed_positions:
             # Only count positions closed today
@@ -194,6 +212,7 @@ class PnLTracker:
             f"Daily Return: {snapshot.daily_return_pct:+.2f}%",
             f"  Realized: ${snapshot.realized_pnl_today:+,.2f}",
             f"  Unrealized: ${snapshot.unrealized_pnl:+,.2f}",
+            f"  Fees Paid: ${snapshot.total_fees_today:,.2f}",  # M-11
         ]
 
         if snapshot.per_strategy:

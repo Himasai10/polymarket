@@ -15,8 +15,9 @@ from .config import Settings
 
 logger = structlog.get_logger()
 
-# USDC contract on Polygon
-USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+# Native USDC contract on Polygon (NOT bridged USDC.e)
+# C-04 FIX: Was using bridged USDC.e (0x2791Bca1f...) which returns wrong balances
+USDC_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 
 # Minimal ERC20 ABI for balanceOf
 USDC_ABI = [
@@ -45,8 +46,13 @@ class WalletManager:
 
     def initialize(self) -> None:
         """Initialize web3 connection and derive addresses."""
-        # Connect to Polygon
-        self._w3 = Web3(Web3.HTTPProvider(self.settings.polygon_rpc_url))
+        # M-23 FIX: Add connection timeout for web3 RPC calls
+        self._w3 = Web3(
+            Web3.HTTPProvider(
+                self.settings.polygon_rpc_url,
+                request_kwargs={"timeout": 30},
+            )
+        )
 
         if not self._w3.is_connected():
             logger.error("polygon_connection_failed", rpc_url=self.settings.polygon_rpc_url)

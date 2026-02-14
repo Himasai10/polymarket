@@ -14,10 +14,13 @@ Strategy:
 3. Place GTC limit orders.
 4. Monitor and refresh orders if they expire or are cancelled.
 5. Limit total capital committed to this strategy.
+
+Audit fixes: H-08, H-09, M-16, M-25
 """
 
 from __future__ import annotations
 
+import asyncio
 import random
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +45,12 @@ class StinkBidder(BaseStrategy):
     STINK-01: Place GTC limit orders at 70-90% discount.
     STINK-02: Auto-refresh expired or cancelled orders.
     STINK-03: Respect max allocation and max active bids limits.
+
+    Audit fixes:
+    - H-08: _active_orders populated after order submission via DB cross-reference.
+    - H-09: Sync CLOB calls wrapped in asyncio.to_thread().
+    - M-16: Skip resolved/closed markets before bidding.
+    - M-25: Signal.size is always in USD (C-06 convention).
     """
 
     def __init__(
@@ -73,18 +82,17 @@ class StinkBidder(BaseStrategy):
         # Override eval interval with refresh_interval_sec from config
         self._eval_interval = self._config.get("refresh_interval_sec", 300)
 
-        # State tracking
+        # H-08: Track active orders — populated via reconciliation
         self._active_orders: dict[str, dict[str, Any]] = {}  # order_id -> details
 
     async def initialize(self) -> None:
         """Load state and active orders."""
         # Restore active orders from persisted state if available
         saved_orders = self.get_state("active_orders", {})
-        if saved_orders:
+        if isinstance(saved_orders, dict):
             self._active_orders = saved_orders
 
-        # Reconcile with actual open orders from client
-        # This cleans up orders that filled or were cancelled while bot was off
+        # H-08: Reconcile with actual open orders from CLOB
         await self._reconcile_orders()
 
         logger.info(
@@ -117,13 +125,12 @@ class StinkBidder(BaseStrategy):
         logger.info("stink_bidder_slots_available", slots=slots_available)
 
         # 3. Find candidate markets
-        # Use high minimum volume to ensure we're fishing in liquid pools
         markets = await self.get_active_markets(min_volume=self._min_market_volume)
         if not markets:
             logger.warning("stink_no_markets_found", min_volume=self._min_market_volume)
             return signals
 
-        # Shuffle markets to avoid always picking the same ones (top volume)
+        # Shuffle markets to avoid always picking the same ones
         random.shuffle(markets)
 
         # 4. Generate signals for new bids
@@ -135,14 +142,21 @@ class StinkBidder(BaseStrategy):
             if self._has_bid_on_market(market.condition_id):
                 continue
 
+            # M-16: Skip resolved/closed markets (fields always present on dataclass)
+            if market.closed or market.resolved:
+                logger.debug(
+                    "stink_skip_closed_or_resolved",
+                    market_id=market.condition_id[:16],
+                    closed=market.closed,
+                    resolved=market.resolved,
+                )
+                continue
+
             # Check price validity
             if market.yes_price <= 0 or market.yes_price >= 1:
                 continue
 
-            # Pick a side (randomly or based on price skew)
-            # Strategy: pick the more expensive side to place a deep discount bid?
-            # Actually, stink bids work best on the side that MIGHT crash.
-            # Let's target the higher priced token, assuming a panic dump might happen.
+            # Pick the higher-priced token (more likely to crash)
             target_token_id = market.yes_token_id
             current_price = market.yes_price
             side_name = "Yes"
@@ -153,25 +167,19 @@ class StinkBidder(BaseStrategy):
                 side_name = "No"
 
             # Calculate stink price (STINK-01)
-            # discount between 70% and 90%
             discount_pct = random.uniform(self._min_discount_pct, self._max_discount_pct)
             stink_price = current_price * (1 - discount_pct / 100)
 
-            # Round to 2 decimal places (Polymarket tick size is usually 0.01 for limit orders?)
-            # Actually, prices are 0.0 to 1.0.  Tick size is typically 0.01 or finer.
-            # Let's round to 3 decimals to be safe, but floor it.
+            # Round to 3 decimal places
             stink_price = float(f"{stink_price:.3f}")
 
             # Safety clamp: never bid above $0.10 for a stink bid
             if stink_price > 0.10:
                 stink_price = 0.10
-
             if stink_price <= 0.01:
                 stink_price = 0.01  # Minimum price
 
-            # Size calculation
-            # Fixed small size for now, or based on allocation?
-            # Let's use the global min_position_size * 2 for these "lottery tickets"
+            # M-25: Size in USD (C-06 convention) — OrderManager converts to shares
             size_usd = self._strategy_config.min_position_size_usd * 2
 
             signal = Signal(
@@ -180,7 +188,7 @@ class StinkBidder(BaseStrategy):
                 token_id=target_token_id,
                 side="BUY",
                 price=stink_price,
-                size=round(size_usd / stink_price, 2),  # Convert USD to shares
+                size=size_usd,  # M-25: USD, not shares
                 order_type="GTC",
                 urgency="normal",
                 reasoning=f"Stink bid: {discount_pct:.1f}% discount on {side_name}",
@@ -195,30 +203,43 @@ class StinkBidder(BaseStrategy):
         return signals
 
     async def _reconcile_orders(self) -> None:
-        """STINK-02: Check which of our tracked orders are still open.
+        """STINK-02 + H-08: Reconcile tracked orders with actual open orders on CLOB.
 
-        Removes filled or cancelled orders from internal tracking.
-        Filled orders will automatically be picked up by PositionManager.
-        Cancelled/Expired orders just clear the slot for a new bid.
+        H-08: Also scans for orders from our strategy in the DB that we may
+        have missed tracking (e.g., from a restart).
+        H-09: Sync CLOB calls wrapped in asyncio.to_thread().
         """
-        if not self._active_orders:
-            return
-
         try:
-            # Get all open orders from CLOB
-            open_orders = self._client.clob.get_orders()
+            # H-09: Wrap sync CLOB call in asyncio.to_thread()
+            open_orders = await asyncio.to_thread(self._client.clob.get_orders)
             if not isinstance(open_orders, list):
                 open_orders = []
 
             open_order_ids = {o.get("orderID") for o in open_orders}
 
-            # Identify missing orders (filled or cancelled)
-            missing_ids = []
-            for order_id in self._active_orders:
-                if order_id not in open_order_ids:
-                    missing_ids.append(order_id)
+            # H-08: Claim any open orders from our strategy that we're not tracking
+            for order in open_orders:
+                order_id = order.get("orderID", "")
+                if order_id and order_id not in self._active_orders:
+                    # Check if this order belongs to us via DB cross-reference
+                    # (DB trade records include strategy name)
+                    trades = self._db.conn.execute(
+                        "SELECT * FROM trades WHERE order_id = ? AND strategy = 'stink_bidder'",
+                        (order_id,),
+                    ).fetchall()
+                    if trades:
+                        self._active_orders[order_id] = {
+                            "market_id": order.get("market", ""),
+                            "token_id": order.get("asset_id", ""),
+                            "price": float(order.get("price", 0)),
+                        }
+                        logger.info(
+                            "stink_bid_reclaimed",
+                            order_id=order_id,
+                        )
 
-            # Remove them from our tracker
+            # Remove orders that are no longer open (filled or cancelled)
+            missing_ids = [oid for oid in self._active_orders if oid not in open_order_ids]
             for mid in missing_ids:
                 removed = self._active_orders.pop(mid, None)
                 if removed:
@@ -230,6 +251,33 @@ class StinkBidder(BaseStrategy):
         except Exception as e:
             logger.error("stink_reconcile_error", error=str(e))
 
+    async def emit_signal(self, signal: Signal) -> bool:
+        """Override to track order placement in _active_orders (H-08).
+
+        After queuing the signal, add a placeholder entry so we don't
+        over-allocate bid slots before reconciliation confirms it.
+        """
+        success = await super().emit_signal(signal)
+
+        if success:
+            # H-08: Add placeholder entry keyed by market_id+token_id
+            # (we don't have the order_id yet; reconciliation will fix the key)
+            placeholder_key = f"pending_{signal.market_id}_{signal.token_id}"
+            self._active_orders[placeholder_key] = {
+                "market_id": signal.market_id,
+                "token_id": signal.token_id,
+                "price": signal.price,
+                "pending": True,
+            }
+            self.set_state("active_orders", self._active_orders)
+            logger.info(
+                "stink_bid_slot_reserved",
+                market_id=signal.market_id[:16],
+                price=signal.price,
+            )
+
+        return success
+
     def _has_bid_on_market(self, market_id: str) -> bool:
         """Check if we already have an active bid for this market."""
         for info in self._active_orders.values():
@@ -237,47 +285,9 @@ class StinkBidder(BaseStrategy):
                 return True
         return False
 
-    async def emit_signal(self, signal: Signal) -> bool:
-        """Override to track order ID after submission."""
-        # Submit normally
-        success = await super().emit_signal(signal)
-
-        # If queued successfully, we don't have the order ID yet (OrderManager processes async).
-        # We need a way to capture the resulting order ID.
-        #
-        # Limitation: The base `emit_signal` returns bool (queued), not the result.
-        # The OrderManager runs in a separate task.
-        #
-        # Workaround: For now, we'll rely on `_reconcile_orders` to find our orders
-        # in the next cycle, or we assume the OrderManager's `record_trade` creates
-        # a DB entry we can query.
-        #
-        # BUT, to track "active slots" accurately, we need to know if it became an order.
-        # Since we can't easily link the async result back here without refactoring OrderManager,
-        # we will:
-        # 1. Optimistically reserve a slot (add placeholder).
-        # 2. In `_reconcile_orders`, we scan ALL open orders and claim the ones
-        #    that belong to 'stink_bidder' strategy.
-        #
-        # Let's implement the "claim from open orders" approach in `_reconcile_orders`
-        # instead of tracking strictly by ID here.
-
-        return success
-
-    async def _reconcile_orders_full_scan(self) -> None:
-        """Alternative reconciliation: scan ALL open orders for this strategy."""
-        # This function would replace the logic in `_reconcile_orders`
-        # to robustly find orders even if we missed the creation event.
-        #
-        # TODO: This requires the CLOB order response to include 'strategy' metadata,
-        # or we cross-reference with our DB.
-        pass
-
     async def shutdown(self) -> None:
-        """Cancel all stink bids on shutdown?
-        Optionally we could leave them GTC, but safer to cancel."""
+        """Persist state on shutdown."""
         logger.info("stink_bidder_shutdown", active_bids=len(self._active_orders))
-        # Note: The main TradingBot shutdown calls `cancel_all`, so we don't need to duplicate here.
 
     def get_status(self) -> dict:
         base = super().get_status()

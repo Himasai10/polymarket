@@ -8,7 +8,7 @@ Addresses: CORE-02 (auth), CORE-04 (market discovery), CORE-05 (orders), CORE-06
 
 from __future__ import annotations
 
-import time
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,7 +16,7 @@ import httpx
 import structlog
 
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
 
 from .config import Settings, StrategyConfig
 
@@ -38,6 +38,8 @@ class Market:
     liquidity: float
     end_date: str
     active: bool
+    closed: bool = False
+    resolved: bool = False
     category: str = ""
     description: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
@@ -46,8 +48,20 @@ class Market:
     def from_gamma(cls, data: dict[str, Any]) -> Market:
         """Parse a market from Gamma API response."""
         tokens = data.get("tokens", [])
-        yes_token = tokens[0] if len(tokens) > 0 else {}
-        no_token = tokens[1] if len(tokens) > 1 else {}
+        # C-03 FIX: Identify tokens by outcome field, not array index
+        yes_token: dict[str, Any] = {}
+        no_token: dict[str, Any] = {}
+        for token in tokens:
+            outcome = token.get("outcome", "").upper()
+            if outcome == "YES":
+                yes_token = token
+            elif outcome == "NO":
+                no_token = token
+        # Fallback: if outcome field missing, use index (legacy compat)
+        if not yes_token and len(tokens) > 0:
+            yes_token = tokens[0]
+        if not no_token and len(tokens) > 1:
+            no_token = tokens[1]
 
         return cls(
             condition_id=data.get("conditionId", data.get("condition_id", "")),
@@ -61,6 +75,9 @@ class Market:
             liquidity=float(data.get("liquidity", 0)),
             end_date=data.get("endDate", data.get("end_date", "")),
             active=data.get("active", False),
+            # M-16 FIX: Parse closed/resolved from API so stink_bidder checks work
+            closed=bool(data.get("closed", False)),
+            resolved=bool(data.get("resolved", False)),
             category=data.get("category", ""),
             description=data.get("description", ""),
             raw=data,
@@ -97,14 +114,21 @@ class PolymarketClient:
         # Initialize CLOB client
         pk = self.settings.wallet_private_key.get_secret_value()
         if pk:
+            # C-01 FIX: Pass private_key via key= parameter
+            # Build ApiCreds from API key/secret/passphrase
+            # M-01 FIX: Extract secret values from SecretStr
+            creds = ApiCreds(
+                api_key=self.settings.polymarket_api_key.get_secret_value(),
+                api_secret=self.settings.polymarket_api_secret.get_secret_value(),
+                api_passphrase=self.settings.polymarket_api_passphrase.get_secret_value(),
+            )
             self._clob_client = ClobClient(
                 host=self.settings.polymarket_host,
-                key=self.settings.polymarket_api_key,
-                secret=self.settings.polymarket_api_secret,
-                passphrase=self.settings.polymarket_api_passphrase,
+                key=pk,
+                creds=creds,
                 signature_type=1,  # MetaMask/Web3 wallet
                 chain_id=self.settings.chain_id,
-                funder=self.settings.funder_address or None,
+                funder=self.settings.funder_address or "",
             )
             logger.info("clob_client_initialized", host=self.settings.polymarket_host)
         else:
@@ -194,7 +218,7 @@ class PolymarketClient:
 
     # ─── CLOB API: Order Operations ──────────────────────────────
 
-    def create_and_place_order(
+    async def create_and_place_order(
         self,
         token_id: str,
         side: str,
@@ -204,6 +228,9 @@ class PolymarketClient:
         expiration: int | None = None,
     ) -> OrderResult:
         """Create and submit an order via CLOB API.
+
+        C-02 FIX: Uses create_and_post_order() to actually submit to exchange.
+        C-05 FIX: Wrapped in asyncio.to_thread() to avoid blocking event loop.
 
         Addresses: CORE-05
         Args:
@@ -215,21 +242,25 @@ class PolymarketClient:
             expiration: Optional expiration in seconds (GTC only)
         """
         try:
-            order_args: dict[str, Any] = {
-                "token_id": token_id,
-                "price": price,
-                "size": size,
-                "side": side,
-            }
+            # Build proper OrderArgs dataclass
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=size,
+                side=side,
+                expiration=expiration or 0,
+            )
 
+            # Map order_type to OrderType enum for post_order options
+            clob_order_type = OrderType.GTC
             if order_type == "FOK":
-                order_args["time_in_force"] = "FOK"
+                clob_order_type = OrderType.FOK
             elif order_type == "IOC":
-                order_args["time_in_force"] = "IOC"
-            elif expiration:
-                order_args["expiration"] = expiration
+                clob_order_type = OrderType.FAK  # Fill-And-Kill is CLOB equiv of IOC
 
-            resp = self.clob.create_order(order_args)
+            # C-02 FIX: Use create_and_post_order instead of create_order
+            # C-05 FIX: Run sync CLOB call in thread to avoid blocking event loop
+            resp = await asyncio.to_thread(self.clob.create_and_post_order, order_args)
 
             # Parse response
             if isinstance(resp, dict):
@@ -264,36 +295,41 @@ class PolymarketClient:
             logger.error("order_placement_failed", error=str(e), side=side, price=price, size=size)
             return OrderResult(success=False, error=str(e))
 
-    def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str) -> bool:
         """Cancel a specific order.
 
+        C-05 FIX: Async wrapper around sync CLOB call.
         Addresses: CORE-06
         """
         try:
-            self.clob.cancel(order_id)
+            await asyncio.to_thread(self.clob.cancel, order_id)
             logger.info("order_cancelled", order_id=order_id)
             return True
         except Exception as e:
             logger.error("order_cancel_failed", order_id=order_id, error=str(e))
             return False
 
-    def cancel_all_orders(self) -> bool:
+    async def cancel_all_orders(self) -> bool:
         """Cancel all open orders.
 
+        C-05 FIX: Async wrapper around sync CLOB call.
         Addresses: CORE-06, RISK-05 (kill switch)
         """
         try:
-            self.clob.cancel_all()
+            await asyncio.to_thread(self.clob.cancel_all)
             logger.info("all_orders_cancelled")
             return True
         except Exception as e:
             logger.error("cancel_all_failed", error=str(e))
             return False
 
-    def get_open_orders(self) -> list[dict[str, Any]]:
-        """Get all open orders."""
+    async def get_open_orders(self) -> list[dict[str, Any]]:
+        """Get all open orders.
+
+        C-05 FIX: Async wrapper around sync CLOB call.
+        """
         try:
-            orders = self.clob.get_orders()
+            orders = await asyncio.to_thread(self.clob.get_orders)
             if isinstance(orders, list):
                 return orders
             return orders if orders else []
@@ -306,21 +342,19 @@ class PolymarketClient:
     async def get_positions(self, wallet_address: str | None = None) -> list[dict[str, Any]]:
         """Get positions for a wallet address.
 
-        If wallet_address is None, returns the bot's own positions.
+        If wallet_address is None, returns the bot's own positions via Data API.
         Used for copy trading (tracking whale wallets).
         """
-        if wallet_address is None:
-            # Use CLOB client for own positions
-            try:
-                positions = self.clob.get_positions()
-                return positions if isinstance(positions, list) else []
-            except Exception as e:
-                logger.error("get_own_positions_failed", error=str(e))
+        # Use Data API for all position queries (CLOB client has no get_positions)
+        address = wallet_address
+        if address is None:
+            address = self.settings.funder_address or ""
+            if not address:
+                logger.warning("get_positions_skipped", reason="no wallet address configured")
                 return []
 
-        # Use Data API for external wallet positions
         url = f"{self.settings.data_api_url}/positions"
-        params = {"user": wallet_address}
+        params = {"user": address}
         try:
             resp = await self.http.get(url, params=params)
             resp.raise_for_status()
@@ -328,19 +362,40 @@ class PolymarketClient:
             return data if isinstance(data, list) else []
         except Exception as e:
             logger.error(
-                "get_wallet_positions_failed",
-                wallet=wallet_address[:10] + "...",
+                "get_positions_failed",
+                wallet=address[:10] + "...",
                 error=str(e),
             )
             return []
 
     async def get_price(self, token_id: str) -> float | None:
-        """Get current price for a token from the order book."""
+        """Get current price for a token from the order book.
+
+        C-05 FIX: Async wrapper around sync CLOB call.
+        """
         try:
-            book = self.clob.get_order_book(token_id)
+            book = await asyncio.to_thread(self.clob.get_order_book, token_id)
             if book and hasattr(book, "bids") and book.bids:
                 return float(book.bids[0].price)
             return None
         except Exception as e:
             logger.error("get_price_failed", token_id=token_id[:16] + "...", error=str(e))
             return None
+
+    async def get_best_bid_ask(self, token_id: str) -> tuple[float | None, float | None]:
+        """Get best bid and best ask from the CLOB orderbook (H-12).
+
+        Returns (best_bid, best_ask). Either may be None if the book is empty.
+        """
+        try:
+            book = await asyncio.to_thread(self.clob.get_order_book, token_id)
+            best_bid = (
+                float(book.bids[0].price) if book and hasattr(book, "bids") and book.bids else None
+            )
+            best_ask = (
+                float(book.asks[0].price) if book and hasattr(book, "asks") and book.asks else None
+            )
+            return best_bid, best_ask
+        except Exception as e:
+            logger.error("get_bid_ask_failed", token_id=token_id[:16] + "...", error=str(e))
+            return None, None

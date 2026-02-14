@@ -3,17 +3,27 @@ Type-safe configuration loaded from .env and strategies.yaml.
 
 Addresses: CORE-01 (config from .env + yaml)
 Prevents: Pitfall 10 (private key exposure via SecretStr)
+
+Audit fixes applied:
+- H-22: Validate credentials exist for live mode
+- H-23: Default to empty dict when yaml.safe_load returns None
+- M-01: API keys wrapped in SecretStr to prevent accidental logging
+- M-02: Strategy allocation percentages validated (sum ≤ 100%)
+- M-24: RPC URL format validation
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import structlog
 import yaml
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = structlog.get_logger()
 
 
 def _find_project_root() -> Path:
@@ -41,10 +51,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Polymarket API credentials
-    polymarket_api_key: str = ""
-    polymarket_api_secret: str = ""
-    polymarket_api_passphrase: str = ""
+    # M-01 FIX: Polymarket API credentials wrapped in SecretStr
+    polymarket_api_key: SecretStr = SecretStr("")
+    polymarket_api_secret: SecretStr = SecretStr("")
+    polymarket_api_passphrase: SecretStr = SecretStr("")
 
     # Wallet
     wallet_private_key: SecretStr = SecretStr("")
@@ -81,6 +91,42 @@ class Settings(BaseSettings):
             raise ValueError(f"trading_mode must be 'paper' or 'live', got '{v}'")
         return v
 
+    # M-24 FIX: Validate RPC URL format
+    @field_validator("polygon_rpc_url")
+    @classmethod
+    def validate_rpc_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https", "ws", "wss"):
+            raise ValueError(f"polygon_rpc_url must start with http(s):// or ws(s)://, got '{v}'")
+        if not parsed.hostname:
+            raise ValueError(f"polygon_rpc_url missing hostname: '{v}'")
+        return v
+
+    # H-22 FIX: Validate credentials exist for live mode
+    @model_validator(mode="after")
+    def validate_live_credentials(self) -> "Settings":
+        if self.trading_mode != "live":
+            return self
+
+        missing: list[str] = []
+        if not self.wallet_private_key.get_secret_value():
+            missing.append("wallet_private_key")
+        if not self.polymarket_api_key.get_secret_value():
+            missing.append("polymarket_api_key")
+        if not self.polymarket_api_secret.get_secret_value():
+            missing.append("polymarket_api_secret")
+        if not self.polymarket_api_passphrase.get_secret_value():
+            missing.append("polymarket_api_passphrase")
+        if not self.funder_address:
+            missing.append("funder_address")
+
+        if missing:
+            raise ValueError(
+                f"Live trading requires credentials: {', '.join(missing)}. "
+                "Set them in .env or switch to trading_mode=paper."
+            )
+        return self
+
     @property
     def is_live(self) -> bool:
         return self.trading_mode == "live"
@@ -96,7 +142,12 @@ class Settings(BaseSettings):
 
 
 class StrategyConfig:
-    """Strategy configuration loaded from strategies.yaml."""
+    """Strategy configuration loaded from strategies.yaml.
+
+    Audit fixes:
+    - H-23: Defaults to empty dict when yaml.safe_load returns None
+    - M-02: Validates strategy allocation totals ≤ 100%
+    """
 
     def __init__(self, config_path: Path | None = None):
         if config_path is None:
@@ -106,7 +157,49 @@ class StrategyConfig:
             raise FileNotFoundError(f"Strategy config not found: {config_path}")
 
         with open(config_path) as f:
-            self._data: dict[str, Any] = yaml.safe_load(f)
+            raw = yaml.safe_load(f)
+            # H-23 FIX: safe_load returns None for empty files
+            self._data: dict[str, Any] = raw if isinstance(raw, dict) else {}
+
+        if not self._data:
+            logger.warning(
+                "strategy_config_empty",
+                path=str(config_path),
+                msg="Strategy config file is empty or invalid, using defaults",
+            )
+
+        # M-02 FIX: Validate allocation totals
+        self._validate_allocations()
+
+    def _validate_allocations(self) -> None:
+        """M-02 FIX: Validate that enabled strategy allocations sum to ≤ 100%."""
+        strategies = self._data.get("strategies", {})
+        if not isinstance(strategies, dict):
+            return
+
+        total_allocation = 0.0
+        for name, cfg in strategies.items():
+            if not isinstance(cfg, dict):
+                continue
+            if not cfg.get("enabled", False):
+                continue
+            alloc = float(cfg.get("allocation_pct", 0.0))
+            if alloc < 0:
+                raise ValueError(f"Strategy '{name}' has negative allocation_pct: {alloc}")
+            total_allocation += alloc
+
+        if total_allocation > 100.0:
+            raise ValueError(
+                f"Total strategy allocation ({total_allocation:.1f}%) exceeds 100%. "
+                "Reduce allocation_pct values in strategies.yaml."
+            )
+
+        if total_allocation > 0:
+            logger.info(
+                "strategy_allocations_validated",
+                total_pct=round(total_allocation, 1),
+                remaining_pct=round(100.0 - total_allocation, 1),
+            )
 
     @property
     def global_config(self) -> dict[str, Any]:
@@ -194,7 +287,10 @@ class StrategyConfig:
 
 
 class WalletConfig:
-    """Tracked wallets loaded from wallets.yaml."""
+    """Tracked wallets loaded from wallets.yaml.
+
+    H-23 FIX: Defaults to empty dict when yaml.safe_load returns None.
+    """
 
     def __init__(self, config_path: Path | None = None):
         if config_path is None:
@@ -204,7 +300,9 @@ class WalletConfig:
             raise FileNotFoundError(f"Wallet config not found: {config_path}")
 
         with open(config_path) as f:
-            self._data: dict[str, Any] = yaml.safe_load(f)
+            raw = yaml.safe_load(f)
+            # H-23 FIX: safe_load returns None for empty files
+            self._data: dict[str, Any] = raw if isinstance(raw, dict) else {}
 
     @property
     def wallets(self) -> list[dict[str, Any]]:

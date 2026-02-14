@@ -57,7 +57,7 @@ class TestOrderManager:
     @pytest.mark.asyncio
     async def test_cancel_all(self, order_manager: OrderManager, mock_client: MagicMock):
         """Cancel all delegates to client."""
-        mock_client.cancel_all_orders.return_value = True
+        mock_client.cancel_all_orders = AsyncMock(return_value=True)
         result = await order_manager.cancel_all()
         assert result is True
         mock_client.cancel_all_orders.assert_called_once()

@@ -3,6 +3,13 @@
 Initializes all components, wires them together, starts the async event loop,
 and handles graceful shutdown on SIGTERM/SIGINT.
 
+Audit fixes applied:
+- H-24: Strategy crash isolation (one failing strategy doesn't take down others)
+- H-25: Ready flag set AFTER strategies start, not before
+- M-04: Cancel orders unconditionally on shutdown (not just live mode)
+- M-05: Rate-limit market resolution polling via RateLimiter
+- M-21: Wait for pending order processing before shutdown
+
 Usage:
     polybot              # Run with defaults (paper mode)
     polybot --live       # Run in live trading mode
@@ -79,6 +86,9 @@ class TradingBot:
             paper_mode=not settings.is_live,
         )
         self._risk_manager = RiskManager(self._strategy_config, self._db, self._wallet)
+        # Wire up circular references (deferred init)
+        self._order_manager.set_risk_manager(self._risk_manager)
+        self._risk_manager.set_order_manager(self._order_manager)
         self._position_manager = PositionManager(
             self._strategy_config,
             self._db,
@@ -264,7 +274,6 @@ class TradingBot:
         # Start HTTP health server (DEPLOY-03)
         health_server_task = asyncio.create_task(self._health_server.start())
         tasks.append(health_server_task)
-        self._health_server.set_ready(True)
 
         # Start WebSocket
         ws_task = asyncio.create_task(self._ws.start())
@@ -274,9 +283,17 @@ class TradingBot:
         order_task = asyncio.create_task(self._order_manager.process_signals())
         tasks.append(order_task)
 
-        # Start all registered strategies
+        # H-24: Start all registered strategies with crash isolation.
+        # A failing strategy should not prevent others from running.
         for strategy in self._strategies:
-            await strategy.start()
+            try:
+                await strategy.start()
+            except Exception:
+                logger.exception("strategy_start_failed", strategy=strategy.name)
+                # Continue starting remaining strategies
+
+        # H-25: Set ready flag AFTER strategies start (not before).
+        self._health_server.set_ready(True)
 
         # Start periodic P&L logging
         pnl_task = asyncio.create_task(self._pnl_loop())
@@ -326,7 +343,12 @@ class TradingBot:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     async def shutdown(self) -> None:
-        """Graceful shutdown: cancel orders, save state, close connections."""
+        """Graceful shutdown: cancel orders, save state, close connections.
+
+        Audit fixes:
+        - M-04: Cancel orders unconditionally (not just live mode)
+        - M-21: Wait for pending order processing to drain before closing
+        """
         logger.info("bot_shutting_down")
 
         # 1. Stop all strategies (saves state)
@@ -336,15 +358,14 @@ class TradingBot:
             except Exception:
                 logger.exception("strategy_stop_error", strategy=strategy.name)
 
-        # 2. Cancel all open orders (safety first)
-        if self._settings.is_live:
-            try:
-                await self._order_manager.cancel_all()
-                logger.info("open_orders_cancelled")
-            except Exception:
-                logger.exception("cancel_orders_error")
+        # 2. M-04: Cancel all open orders unconditionally (paper mode may have queued orders)
+        try:
+            await self._order_manager.cancel_all()
+            logger.info("open_orders_cancelled")
+        except Exception:
+            logger.exception("cancel_orders_error")
 
-        # 3. Stop order manager
+        # 3. M-21: Stop order manager and wait for in-flight processing to finish
         await self._order_manager.stop()
 
         # 4. Stop WebSocket
@@ -419,18 +440,26 @@ class TradingBot:
                 continue
 
     async def _health_loop(self) -> None:
-        """Periodically run health checks."""
+        """Periodically run health checks.
+
+        M-12: Only sends Telegram alerts when health status *changes*
+        (not every cycle).
+        """
+        _last_overall_status: str | None = None
+
         while not self._shutdown_event.is_set():
             try:
                 health = await self._health_checker.get_system_health()
+                current_status = health.overall.value
+
                 if not health.is_healthy:
                     logger.warning(
                         "system_unhealthy",
-                        overall=health.overall.value,
+                        overall=current_status,
                         components={c.name: c.status.value for c in health.components},
                     )
-                    # Send Telegram alert for system degradation (TG-08)
-                    if self._notifier.is_enabled:
+                    # M-12: Only alert when status changes (deduplication)
+                    if self._notifier.is_enabled and current_status != _last_overall_status:
                         degraded = [
                             f"{c.name}: {c.status.value}"
                             for c in health.components
@@ -441,6 +470,8 @@ class TradingBot:
                             message="\n".join(degraded),
                             level="warning",
                         )
+
+                _last_overall_status = current_status
             except Exception:
                 logger.exception("health_check_error")
 
@@ -478,7 +509,10 @@ class TradingBot:
                     logger.info("daily_pnl_summary_sent")
 
     async def _market_resolution_loop(self) -> None:
-        """Periodically poll for resolved markets and close positions."""
+        """Periodically poll for resolved markets and close positions.
+
+        M-05: Uses rate limiter to avoid hammering the API.
+        """
         while not self._shutdown_event.is_set():
             try:
                 # Get all open markets with positions
@@ -486,6 +520,8 @@ class TradingBot:
                 market_ids = {p["market_id"] for p in positions}
 
                 for market_id in market_ids:
+                    # M-05: Respect rate limiter for each API call
+                    await self._rate_limiter.acquire()
                     # Check if market is resolved via API
                     market = await self._client.get_market(market_id)
                     if market and not market.active:

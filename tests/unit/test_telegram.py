@@ -314,7 +314,10 @@ class TestTelegramCommandBot:
         mock_message = AsyncMock()
         mock_update.message = mock_message
 
-        await command_bot._cmd_kill(mock_update, None)
+        mock_context = MagicMock()
+        mock_context.args = ["confirm"]
+
+        await command_bot._cmd_kill(mock_update, mock_context)
 
         mock_kill.assert_called_once()
         mock_message.reply_text.assert_called_once()
