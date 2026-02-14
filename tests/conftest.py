@@ -73,15 +73,15 @@ positions:
       sell_pct: 100
 
 strategies:
-  copy_trading:
+  copy_trader:
     enabled: true
     allocation_pct: 40
     eval_interval_seconds: 30
-  arbitrage:
+  arb_scanner:
     enabled: true
     allocation_pct: 20
     eval_interval_seconds: 10
-  stink_bids:
+  stink_bidder:
     enabled: false
     allocation_pct: 20
     eval_interval_seconds: 300
@@ -93,7 +93,7 @@ strategies:
 def sample_signal() -> Signal:
     """Provide a sample trading signal."""
     return Signal(
-        strategy="copy_trading",
+        strategy="copy_trader",
         market_id="0x" + "aa" * 32,
         token_id="0x" + "bb" * 32,
         side="BUY",

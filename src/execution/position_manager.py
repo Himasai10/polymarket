@@ -6,7 +6,9 @@ Addresses: POS-01 through POS-05
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -14,7 +16,26 @@ from ..core.config import StrategyConfig
 from ..core.db import Database
 from .order_manager import OrderManager, Signal
 
+if TYPE_CHECKING:
+    from ..notifications.telegram import TelegramNotifier
+
 logger = structlog.get_logger()
+
+
+def _parse_metadata(position: dict[str, Any]) -> dict[str, Any]:
+    """Safely parse position metadata from JSON string or dict."""
+    meta = position.get("metadata")
+    if meta is None:
+        return {}
+    if isinstance(meta, dict):
+        return meta
+    if isinstance(meta, str):
+        try:
+            parsed = json.loads(meta)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
 
 
 class PositionManager:
@@ -29,10 +50,12 @@ class PositionManager:
         strategy_config: StrategyConfig,
         db: Database,
         order_manager: OrderManager,
+        notifier: TelegramNotifier | None = None,
     ):
         self.config = strategy_config
         self.db = db
         self.order_manager = order_manager
+        self._notifier = notifier
 
     async def on_price_update(self, token_id: str, price: float, timestamp: float) -> None:
         """Handle a price update from WebSocket.
@@ -171,6 +194,28 @@ class PositionManager:
             strategy=position["strategy"],
         )
 
+        # Send Telegram alert (TG-02)
+        if self._notifier:
+            opened_at = position.get("opened_at")
+            duration = ""
+            if opened_at:
+                try:
+                    opened_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                    delta = datetime.now(timezone.utc) - opened_dt
+                    hours = delta.total_seconds() / 3600
+                    duration = f"{hours:.1f}h"
+                except Exception:
+                    pass
+            await self._notifier.alert_position_closed(
+                strategy=position["strategy"],
+                market_id=position["market_id"],
+                reason=reason,
+                pnl=realized_pnl,
+                pnl_pct=pnl_pct,
+                hold_duration_str=duration,
+                market_question=_parse_metadata(position).get("market_question", ""),
+            )
+
     async def _partial_close(
         self,
         position: dict[str, Any],
@@ -209,6 +254,18 @@ class PositionManager:
             remaining=remaining,
         )
 
+        # Send Telegram alert for partial close
+        if self._notifier:
+            await self._notifier.alert_position_closed(
+                strategy=position["strategy"],
+                market_id=position["market_id"],
+                reason=f"Partial take-profit tier {tier_index}",
+                pnl=0,  # Realized P&L tracked separately
+                pnl_pct=0,
+                hold_duration_str="",
+                market_question=_parse_metadata(position).get("market_question", ""),
+            )
+
     def check_market_resolution(self, market_id: str, outcome: str) -> None:
         """Handle market resolution.
 
@@ -237,7 +294,7 @@ class PositionManager:
                 token_id == outcome  # Direct token_id match
                 or (
                     outcome_lower == "yes"
-                    and token_id == position.get("metadata", {}).get("yes_token_id", "")
+                    and token_id == _parse_metadata(position).get("yes_token_id", "")
                 )
             )
 

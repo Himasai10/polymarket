@@ -19,17 +19,12 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     # Database
+    # Note: aiosqlite reserved for future async DB migration
     "aiosqlite>=0.20.0",
     # Logging and resilience
     "structlog>=24.0",
-    "tenacity>=8.0",
     # Notifications
     "python-telegram-bot>=20.0",
-    # Scheduling
-    "apscheduler>=3.10",
-    # Data analysis
-    "pandas>=2.0",
-    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]

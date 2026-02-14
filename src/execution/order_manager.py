@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from ..core.client import OrderResult, PolymarketClient
 from ..core.db import Database
 from ..core.rate_limiter import RateLimiter
+
+if TYPE_CHECKING:
+    from ..notifications.telegram import TelegramNotifier
 
 logger = structlog.get_logger()
 
@@ -51,10 +54,14 @@ class OrderManager:
         client: PolymarketClient,
         db: Database,
         rate_limiter: RateLimiter,
+        notifier: TelegramNotifier | None = None,
+        paper_mode: bool = False,
     ):
         self.client = client
         self.db = db
         self.rate_limiter = rate_limiter
+        self._notifier = notifier
+        self._paper_mode = paper_mode
         self._signal_queue: asyncio.Queue[Signal] = asyncio.Queue()
         self._running = False
 
@@ -95,19 +102,39 @@ class OrderManager:
         logger.info("order_manager_stopped")
 
     async def _execute_signal(self, signal: Signal) -> OrderResult | None:
-        """Execute a single trading signal."""
+        """Execute a single trading signal.
+
+        In paper mode, simulates the order without calling the CLOB API.
+        """
         # Acquire rate limit slot
         await self.rate_limiter.acquire()
 
         try:
-            # Place the order via CLOB API
-            result = self.client.create_and_place_order(
-                token_id=signal.token_id,
-                side=signal.side,
-                price=signal.price,
-                size=signal.size,
-                order_type=signal.order_type,
-            )
+            if self._paper_mode:
+                # Paper trading: simulate a successful order
+                import uuid
+
+                result = OrderResult(
+                    success=True,
+                    order_id=f"paper-{uuid.uuid4().hex[:12]}",
+                    raw={"mode": "paper"},
+                )
+                logger.info(
+                    "paper_order_simulated",
+                    strategy=signal.strategy,
+                    side=signal.side,
+                    price=signal.price,
+                    size=signal.size,
+                )
+            else:
+                # Live trading: place the order via CLOB API
+                result = self.client.create_and_place_order(
+                    token_id=signal.token_id,
+                    side=signal.side,
+                    price=signal.price,
+                    size=signal.size,
+                    order_type=signal.order_type,
+                )
 
             # Record in database
             if result.success:
@@ -147,6 +174,17 @@ class OrderManager:
                         price=signal.price,
                         size=signal.size,
                     )
+                    # Send Telegram alert (TG-01)
+                    if self._notifier:
+                        await self._notifier.alert_position_opened(
+                            strategy=signal.strategy,
+                            market_id=signal.market_id,
+                            side=signal.side,
+                            price=signal.price,
+                            size=signal.size,
+                            reasoning=signal.reasoning,
+                            market_question=signal.metadata.get("market_question", ""),
+                        )
             else:
                 if "rate" in result.error.lower() or "429" in result.error:
                     self.rate_limiter.record_rate_limit()

@@ -71,7 +71,11 @@ class TradingBot:
 
         # Execution
         self._order_manager = OrderManager(
-            self._client, self._db, self._rate_limiter, notifier=self._notifier
+            self._client,
+            self._db,
+            self._rate_limiter,
+            notifier=self._notifier,
+            paper_mode=not settings.is_live,
         )
         self._risk_manager = RiskManager(self._strategy_config, self._db, self._wallet)
         self._position_manager = PositionManager(
@@ -467,14 +471,18 @@ class TradingBot:
                 for market_id in market_ids:
                     # Check if market is resolved via API
                     market = await self._client.get_market(market_id)
-                    if market and getattr(market, "resolved", False):
-                        outcome = market.get("resolution", market.get("winning_outcome", ""))
-                        logger.info(
-                            "market_resolved",
-                            market_id=market_id,
-                            outcome=outcome,
+                    if market and not market.active:
+                        # Market is no longer active — check raw data for resolution info
+                        outcome = market.raw.get(
+                            "resolution", market.raw.get("winning_outcome", "")
                         )
-                        self._position_manager.check_market_resolution(market_id, outcome)
+                        if outcome:
+                            logger.info(
+                                "market_resolved",
+                                market_id=market_id,
+                                outcome=outcome,
+                            )
+                            self._position_manager.check_market_resolution(market_id, outcome)
 
             except Exception:
                 logger.exception("market_resolution_check_error")

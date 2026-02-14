@@ -76,7 +76,9 @@ class PnLTracker:
             # First run today — record current portfolio value as starting balance
             balance = self._wallet.get_usdc_balance()
             positions = self._db.get_open_positions()
-            positions_value = sum(p["current_price"] * p["size"] for p in positions)
+            positions_value = sum(
+                (p["current_price"] or p["entry_price"]) * p["size"] for p in positions
+            )
             self._starting_balance = balance + positions_value
             self._db.record_daily_pnl(today, self._starting_balance)
             logger.info(
@@ -96,7 +98,7 @@ class PnLTracker:
         per_strategy: dict[str, StrategyPnL] = {}
 
         for pos in positions:
-            pos_value = pos["current_price"] * pos["size"]
+            pos_value = (pos["current_price"] or pos["entry_price"]) * pos["size"]
             pos_unrealized = pos.get("unrealized_pnl", 0.0)
             positions_value += pos_value
             unrealized_pnl += pos_unrealized

@@ -41,8 +41,8 @@ class TestStrategyConfig:
 
     def test_load_strategies(self, strategy_config: StrategyConfig):
         """Config loads strategy definitions from YAML."""
-        assert strategy_config.is_strategy_enabled("copy_trading") is True
-        assert strategy_config.is_strategy_enabled("stink_bids") is False
+        assert strategy_config.is_strategy_enabled("copy_trader") is True
+        assert strategy_config.is_strategy_enabled("stink_bidder") is False
 
     def test_risk_parameters(self, strategy_config: StrategyConfig):
         """Risk parameters loaded correctly."""
@@ -54,8 +54,8 @@ class TestStrategyConfig:
 
     def test_strategy_allocation(self, strategy_config: StrategyConfig):
         """Strategy allocation percentages loaded correctly."""
-        assert strategy_config.get_strategy_allocation("copy_trading") == 40
-        assert strategy_config.get_strategy_allocation("arbitrage") == 20
+        assert strategy_config.get_strategy_allocation("copy_trader") == 40
+        assert strategy_config.get_strategy_allocation("arb_scanner") == 20
         assert strategy_config.get_strategy_allocation("nonexistent") == 0
 
     def test_take_profit_tiers(self, strategy_config: StrategyConfig):
@@ -79,7 +79,7 @@ class TestStrategyConfig:
 
     def test_get_strategy(self, strategy_config: StrategyConfig):
         """Can retrieve individual strategy config."""
-        copy = strategy_config.get_strategy("copy_trading")
+        copy = strategy_config.get_strategy("copy_trader")
         assert copy is not None
         assert copy["enabled"] is True
         assert copy["allocation_pct"] == 40

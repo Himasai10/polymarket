@@ -1,7 +1,7 @@
 """
 Wallet management: balance checks, address derivation.
 
-Addresses: CORE-03 (USDC balance via web3.py==6.14.0)
+Addresses: CORE-03 (USDC balance via web3.py>=7.0)
 Prevents: Pitfall 2 (proxy wallet confusion)
 """
 

@@ -31,7 +31,7 @@ class TestSignal:
 
     def test_signal_with_metadata(self, sample_signal: Signal):
         assert sample_signal.metadata["edge_pct"] == 8.0
-        assert sample_signal.strategy == "copy_trading"
+        assert sample_signal.strategy == "copy_trader"
 
 
 class TestOrderManager:

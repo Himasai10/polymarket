@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -16,6 +17,9 @@ from ..core.client import PolymarketClient
 from ..core.db import Database
 from ..core.wallet import WalletManager
 from ..core.websocket import WebSocketManager
+
+if TYPE_CHECKING:
+    from ..notifications.telegram import TelegramNotifier
 
 logger = structlog.get_logger()
 
@@ -78,11 +82,13 @@ class HealthChecker:
         db: Database,
         wallet: WalletManager,
         ws_manager: WebSocketManager,
+        notifier: TelegramNotifier | None = None,
     ) -> None:
         self._client = client
         self._db = db
         self._wallet = wallet
         self._ws = ws_manager
+        self._notifier = notifier
         self._start_time = datetime.now(timezone.utc)
 
     @property
