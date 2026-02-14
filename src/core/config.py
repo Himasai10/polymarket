@@ -165,7 +165,10 @@ class StrategyConfig:
 
     def is_strategy_enabled(self, name: str) -> bool:
         """Check if a strategy is enabled."""
-        return self.get_strategy(name).get("enabled", False)
+        strategy = self.get_strategy(name)
+        if strategy is None:
+            return False
+        return strategy.get("enabled", False)
 
     def get_strategy_allocation(self, name: str) -> float:
         """Get allocation percentage for a strategy."""

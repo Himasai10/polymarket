@@ -388,6 +388,9 @@ def main() -> None:
         if args.status:
             # Just print status and exit
             status = loop.run_until_complete(_print_status(bot))
+        elif args.kill:
+            # Activate kill switch: cancel all orders and halt trading
+            loop.run_until_complete(_execute_kill_switch(bot))
         else:
             loop.run_until_complete(bot.start())
     except KeyboardInterrupt:
@@ -405,6 +408,44 @@ async def _print_status(bot: TradingBot) -> None:
 
     print(json.dumps(status, indent=2, default=str))
 
+    await bot._client.close()
+    bot._db.close()
+
+
+async def _execute_kill_switch(bot: TradingBot) -> None:
+    """Activate kill switch: cancel all open orders, halt trading, and exit.
+
+    This is the emergency stop — cancels everything and sets the kill switch
+    flag so the bot won't resume trading on next start without manual reset.
+    """
+    logger.warning("KILL_SWITCH_ACTIVATED — cancelling all orders")
+
+    # Initialize just enough to cancel orders
+    bot._db.initialize()
+    await bot._client.initialize()
+
+    # Activate the kill switch in risk manager (persists state)
+    bot._risk_manager.activate_kill_switch()
+    logger.info("kill_switch_set", msg="Risk manager kill switch activated")
+
+    # Cancel all open orders
+    try:
+        result = await bot._order_manager.cancel_all()
+        if result:
+            logger.info("all_orders_cancelled")
+        else:
+            logger.warning("cancel_orders_may_have_failed")
+    except Exception:
+        logger.exception("cancel_orders_error")
+
+    # Print summary
+    open_positions = bot._db.get_open_positions()
+    print(f"\nKill switch activated.")
+    print(f"  Open positions remaining: {len(open_positions)}")
+    print(f"  Kill switch is now ON — bot will not trade until manually reset.")
+    print(f"  To resume: clear the kill switch in config or restart with fresh state.\n")
+
+    # Cleanup
     await bot._client.close()
     bot._db.close()
 
