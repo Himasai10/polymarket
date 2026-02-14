@@ -52,13 +52,26 @@ class WebSocketManager:
         self._callbacks.append(callback)
 
     def subscribe(self, token_ids: list[str]) -> None:
-        """Add token IDs to subscription list."""
+        """Add token IDs to subscription list.
+
+        If already connected, sends subscription message immediately.
+        """
+        new_tokens = set(token_ids) - self._subscribed_tokens
         self._subscribed_tokens.update(token_ids)
-        logger.info("ws_tokens_subscribed", count=len(token_ids))
+        logger.info("ws_tokens_subscribed", count=len(token_ids), new=len(new_tokens))
+
+        # If already connected, send subscribe for the new tokens immediately
+        if new_tokens and self.is_connected:
+            asyncio.ensure_future(self._send_subscribe(list(new_tokens)))
 
     def unsubscribe(self, token_ids: list[str]) -> None:
-        """Remove token IDs from subscription list."""
+        """Remove token IDs from subscription list.
+
+        If already connected, sends unsubscribe message immediately.
+        """
         self._subscribed_tokens -= set(token_ids)
+        if self.is_connected:
+            asyncio.ensure_future(self._send_unsubscribe(token_ids))
 
     def get_latest_price(self, token_id: str) -> float | None:
         """Get last known price for a token."""
@@ -128,6 +141,19 @@ class WebSocketManager:
         }
         await self._ws.send(json.dumps(msg))
         logger.info("ws_subscribed", token_count=len(token_ids))
+
+    async def _send_unsubscribe(self, token_ids: list[str]) -> None:
+        """Send unsubscribe message for token IDs."""
+        if not self._ws or self._ws.closed:
+            return
+
+        msg = {
+            "type": "unsubscribe",
+            "assets_ids": token_ids,
+            "channels": ["book"],
+        }
+        await self._ws.send(json.dumps(msg))
+        logger.info("ws_unsubscribed", token_count=len(token_ids))
 
     async def _handle_message(self, raw_message: str | bytes) -> None:
         """Parse and distribute a WebSocket message."""

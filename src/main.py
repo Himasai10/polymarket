@@ -32,6 +32,7 @@ from .monitoring.health import HealthChecker
 from .monitoring.logger import setup_logging
 from .monitoring.pnl import PnLTracker
 from .strategies.base import BaseStrategy
+from .strategies.copy_trader import CopyTrader
 
 logger = structlog.get_logger()
 
@@ -70,6 +71,9 @@ class TradingBot:
         # Monitoring
         self._pnl_tracker = PnLTracker(self._db, self._wallet)
         self._health_checker = HealthChecker(self._client, self._db, self._wallet, self._ws)
+
+        # Register strategies
+        self._register_strategies()
 
     async def initialize(self) -> None:
         """Initialize all components in order."""
@@ -114,6 +118,24 @@ class TradingBot:
         """Register a strategy with the bot."""
         self._strategies.append(strategy)
         logger.info("strategy_registered", strategy=strategy.name)
+
+    def _register_strategies(self) -> None:
+        """Auto-register strategies based on config."""
+        # Copy Trader (Phase 2)
+        if self._strategy_config.is_strategy_enabled("copy_trader"):
+            copy_trader = CopyTrader(
+                client=self._client,
+                db=self._db,
+                order_manager=self._order_manager,
+                risk_manager=self._risk_manager,
+                strategy_config=self._strategy_config,
+                wallet_config=self._wallet_config,
+                wallet_manager=self._wallet,
+                ws_manager=self._ws,
+            )
+            self.register_strategy(copy_trader)
+        else:
+            logger.info("strategy_disabled_in_config", strategy="copy_trader")
 
     async def start(self) -> None:
         """Start all components and run until shutdown."""
@@ -308,6 +330,11 @@ def parse_args() -> argparse.Namespace:
         "--status",
         action="store_true",
         help="Print current bot status and exit",
+    )
+    parser.add_argument(
+        "--kill",
+        action="store_true",
+        help="Activate kill switch: cancel all open orders and exit",
     )
     return parser.parse_args()
 

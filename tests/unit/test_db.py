@@ -162,3 +162,184 @@ class TestDatabase:
     def test_get_today_realized_pnl(self, db: Database):
         """Today's realized PnL starts at 0."""
         assert db.get_today_realized_pnl() == 0.0
+
+    # ─── New DB methods (Phase 2) ─────────────────────────────────
+
+    def test_update_position_trailing_stop(self, db: Database):
+        """Can update trailing stop price for a position."""
+        pos_id = db.open_position("m1", "t1", "copy_trader", "BUY", 0.50, 100.0)
+
+        db.update_position_trailing_stop(pos_id, trailing_stop_price=0.45)
+
+        positions = db.get_open_positions()
+        assert positions[0]["trailing_stop_price"] == 0.45
+
+        # Update again (price moved up)
+        db.update_position_trailing_stop(pos_id, trailing_stop_price=0.55)
+        positions = db.get_open_positions()
+        assert positions[0]["trailing_stop_price"] == 0.55
+
+    def test_update_position_partial_close(self, db: Database):
+        """Can update position size and TP tier after partial close."""
+        pos_id = db.open_position("m1", "t1", "copy_trader", "BUY", 0.50, 100.0)
+
+        # First TP tier: sell 50%, remaining = 50
+        db.update_position_partial_close(pos_id, remaining_size=50.0, take_profit_triggered=1)
+
+        positions = db.get_open_positions()
+        assert positions[0]["size"] == 50.0
+        assert positions[0]["take_profit_triggered"] == 1
+
+        # Second TP tier: sell remaining
+        db.update_position_partial_close(pos_id, remaining_size=0.0, take_profit_triggered=2)
+        positions = db.get_open_positions()
+        assert positions[0]["size"] == 0.0
+        assert positions[0]["take_profit_triggered"] == 2
+
+    def test_delete_whale_position(self, db: Database):
+        """Can delete a specific whale position."""
+        db.upsert_whale_position("0xwhale", "mkt1", "tok1", 500.0, 0.50)
+        db.upsert_whale_position("0xwhale", "mkt2", "tok2", 300.0, 0.40)
+
+        assert len(db.get_whale_positions("0xwhale")) == 2
+
+        db.delete_whale_position("0xwhale", "mkt1", "tok1")
+
+        positions = db.get_whale_positions("0xwhale")
+        assert len(positions) == 1
+        assert positions[0]["market_id"] == "mkt2"
+
+    def test_delete_whale_position_nonexistent(self, db: Database):
+        """Deleting a nonexistent whale position does not raise."""
+        db.delete_whale_position("0xnobody", "mkt_fake", "tok_fake")
+        # Should not raise
+
+    def test_get_all_whale_positions(self, db: Database):
+        """Can retrieve whale positions across all wallets."""
+        db.upsert_whale_position("0xwhale1", "mkt1", "tok1", 500.0)
+        db.upsert_whale_position("0xwhale2", "mkt2", "tok2", 300.0)
+        db.upsert_whale_position("0xwhale1", "mkt3", "tok3", 200.0)
+
+        all_pos = db.get_all_whale_positions()
+        assert len(all_pos) == 3
+
+        wallets = {p["wallet_address"] for p in all_pos}
+        assert wallets == {"0xwhale1", "0xwhale2"}
+
+    def test_get_all_whale_positions_empty(self, db: Database):
+        """Empty DB returns empty list for all whale positions."""
+        assert db.get_all_whale_positions() == []
+
+    def test_get_positions_by_wallet_source(self, db: Database):
+        """Can query positions by source_wallet metadata."""
+        db.open_position(
+            "m1",
+            "t1",
+            "copy_trader",
+            "BUY",
+            0.50,
+            100.0,
+            metadata={"source_wallet": "0xwhale_a"},
+        )
+        db.open_position(
+            "m2",
+            "t2",
+            "copy_trader",
+            "BUY",
+            0.60,
+            50.0,
+            metadata={"source_wallet": "0xwhale_b"},
+        )
+        db.open_position(
+            "m3",
+            "t3",
+            "copy_trader",
+            "BUY",
+            0.40,
+            75.0,
+            metadata={"source_wallet": "0xwhale_a"},
+        )
+
+        positions = db.get_positions_by_wallet_source("0xwhale_a")
+        assert len(positions) == 2
+        market_ids = {p["market_id"] for p in positions}
+        assert market_ids == {"m1", "m3"}
+
+    def test_get_positions_by_wallet_source_none(self, db: Database):
+        """No matching positions returns empty list."""
+        positions = db.get_positions_by_wallet_source("0xnonexistent")
+        assert positions == []
+
+    def test_get_closed_positions(self, db: Database):
+        """Can retrieve closed positions filtered by strategy."""
+        pos1 = db.open_position("m1", "t1", "copy_trader", "BUY", 0.50, 100.0)
+        pos2 = db.open_position("m2", "t2", "arbitrage", "BUY", 0.60, 50.0)
+        pos3 = db.open_position("m3", "t3", "copy_trader", "BUY", 0.40, 75.0)
+
+        db.close_position(pos1, realized_pnl=10.0, close_reason="take_profit")
+        db.close_position(pos2, realized_pnl=-5.0, close_reason="stop_loss")
+        # pos3 stays open
+
+        # All closed
+        all_closed = db.get_closed_positions()
+        assert len(all_closed) == 2
+
+        # Filtered by strategy
+        copy_closed = db.get_closed_positions(strategy="copy_trader")
+        assert len(copy_closed) == 1
+        assert copy_closed[0]["market_id"] == "m1"
+        assert copy_closed[0]["realized_pnl"] == 10.0
+
+    def test_get_closed_positions_empty(self, db: Database):
+        """No closed positions returns empty list."""
+        assert db.get_closed_positions() == []
+
+    def test_get_closed_positions_respects_limit(self, db: Database):
+        """Limit parameter constrains result count."""
+        for i in range(5):
+            pos_id = db.open_position(f"m{i}", f"t{i}", "copy_trader", "BUY", 0.50, 10.0)
+            db.close_position(pos_id, realized_pnl=float(i), close_reason="test")
+
+        limited = db.get_closed_positions(limit=3)
+        assert len(limited) == 3
+
+    def test_update_daily_pnl_end_of_day(self, db: Database):
+        """Can finalize end-of-day PnL record."""
+        db.record_daily_pnl("2026-02-13", starting_balance=1000.0)
+
+        db.update_daily_pnl_end_of_day(
+            date_str="2026-02-13",
+            ending_balance=1050.0,
+            realized_pnl=55.0,
+            unrealized_pnl=-5.0,
+            trades_count=12,
+            wins=8,
+            losses=4,
+            fees_paid=2.50,
+        )
+
+        daily = db.get_daily_pnl("2026-02-13")
+        assert daily is not None
+        assert daily["ending_balance"] == 1050.0
+        assert daily["realized_pnl"] == 55.0
+        assert daily["unrealized_pnl"] == -5.0
+        assert daily["trades_count"] == 12
+        assert daily["wins"] == 8
+        assert daily["losses"] == 4
+        assert daily["fees_paid"] == 2.50
+
+    def test_update_daily_pnl_end_of_day_no_record(self, db: Database):
+        """Updating a non-existent daily record is a no-op (no crash)."""
+        # No record for this date — update should not raise
+        db.update_daily_pnl_end_of_day(
+            date_str="2099-01-01",
+            ending_balance=0,
+            realized_pnl=0,
+            unrealized_pnl=0,
+            trades_count=0,
+            wins=0,
+            losses=0,
+            fees_paid=0,
+        )
+        # Should return None since record was never created
+        assert db.get_daily_pnl("2099-01-01") is None

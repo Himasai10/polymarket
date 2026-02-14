@@ -124,6 +124,29 @@ class OrderManager:
                     reasoning=signal.reasoning,
                     metadata=signal.metadata,
                 )
+
+                # Open a position in DB for entry trades (not exits)
+                is_exit = signal.metadata.get("is_exit", False)
+                if not is_exit and signal.side == "BUY":
+                    stop_loss = signal.metadata.get("stop_loss_price")
+                    self.db.open_position(
+                        market_id=signal.market_id,
+                        token_id=signal.token_id,
+                        strategy=signal.strategy,
+                        side=signal.side,
+                        entry_price=signal.price,
+                        size=signal.size,
+                        stop_loss_price=stop_loss,
+                        metadata=signal.metadata,
+                    )
+                    logger.info(
+                        "position_opened",
+                        strategy=signal.strategy,
+                        market_id=signal.market_id,
+                        side=signal.side,
+                        price=signal.price,
+                        size=signal.size,
+                    )
             else:
                 if "rate" in result.error.lower() or "429" in result.error:
                     self.rate_limiter.record_rate_limit()

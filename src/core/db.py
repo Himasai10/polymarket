@@ -316,6 +316,24 @@ class Database:
         )
         self.conn.commit()
 
+    def update_position_trailing_stop(self, position_id: int, trailing_stop_price: float) -> None:
+        """Update the trailing stop price for a position."""
+        self.conn.execute(
+            "UPDATE positions SET trailing_stop_price = ? WHERE id = ?",
+            (trailing_stop_price, position_id),
+        )
+        self.conn.commit()
+
+    def update_position_partial_close(
+        self, position_id: int, remaining_size: float, take_profit_triggered: int
+    ) -> None:
+        """Update position after a partial close (TP tier triggered)."""
+        self.conn.execute(
+            "UPDATE positions SET size = ?, take_profit_triggered = ? WHERE id = ?",
+            (remaining_size, take_profit_triggered, position_id),
+        )
+        self.conn.commit()
+
     def get_open_positions(self, strategy: str | None = None) -> list[dict[str, Any]]:
         """Get all open positions."""
         query = "SELECT * FROM positions WHERE status = 'open'"
@@ -407,3 +425,79 @@ class Database:
             (wallet_address,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def delete_whale_position(self, wallet_address: str, market_id: str, token_id: str) -> None:
+        """Delete a whale position (when whale exits)."""
+        self.conn.execute(
+            """DELETE FROM whale_positions
+               WHERE wallet_address = ? AND market_id = ? AND token_id = ?""",
+            (wallet_address, market_id, token_id),
+        )
+        self.conn.commit()
+
+    def get_all_whale_positions(self) -> list[dict[str, Any]]:
+        """Get all stored whale positions across all wallets."""
+        rows = self.conn.execute("SELECT * FROM whale_positions").fetchall()
+        return [dict(row) for row in rows]
+
+    # ─── Whale Copy Performance ───────────────────────────────────
+
+    def get_positions_by_wallet_source(self, wallet_address: str) -> list[dict[str, Any]]:
+        """Get all positions opened due to copying a specific wallet.
+
+        Uses metadata JSON field 'source_wallet' to identify copy trades.
+        """
+        rows = self.conn.execute(
+            """SELECT * FROM positions
+               WHERE metadata LIKE ?
+               ORDER BY opened_at DESC""",
+            (f'%"source_wallet": "{wallet_address}"%',),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_closed_positions(
+        self, strategy: str | None = None, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Get closed positions, optionally filtered by strategy."""
+        query = "SELECT * FROM positions WHERE status = 'closed'"
+        params: list[Any] = []
+
+        if strategy:
+            query += " AND strategy = ?"
+            params.append(strategy)
+
+        query += " ORDER BY closed_at DESC LIMIT ?"
+        params.append(limit)
+
+        rows = self.conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_daily_pnl_end_of_day(
+        self,
+        date_str: str,
+        ending_balance: float,
+        realized_pnl: float,
+        unrealized_pnl: float,
+        trades_count: int,
+        wins: int,
+        losses: int,
+        fees_paid: float,
+    ) -> None:
+        """Finalize end-of-day P&L record."""
+        self.conn.execute(
+            """UPDATE daily_pnl
+               SET ending_balance = ?, realized_pnl = ?, unrealized_pnl = ?,
+                   trades_count = ?, wins = ?, losses = ?, fees_paid = ?
+               WHERE date = ?""",
+            (
+                ending_balance,
+                realized_pnl,
+                unrealized_pnl,
+                trades_count,
+                wins,
+                losses,
+                fees_paid,
+                date_str,
+            ),
+        )
+        self.conn.commit()

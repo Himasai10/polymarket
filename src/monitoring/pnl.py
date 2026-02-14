@@ -141,17 +141,18 @@ class PnLTracker:
         )
 
     def _enrich_strategy_pnl(self, per_strategy: dict[str, StrategyPnL]) -> None:
-        """Add realized P&L and win/loss counts from today's closed trades."""
-        trades = self._db.get_trades(status="filled", limit=500)
+        """Add realized P&L and win/loss counts from today's closed positions."""
+        # Use closed positions (not trades) for accurate realized P&L
+        closed_positions = self._db.get_closed_positions(limit=500)
         today = date.today().isoformat()
 
-        for trade in trades:
-            # Only count trades from today
-            created = trade.get("created_at", "")
-            if not created.startswith(today):
+        for pos in closed_positions:
+            # Only count positions closed today
+            closed_at = pos.get("closed_at", "")
+            if not closed_at.startswith(today):
                 continue
 
-            strategy = trade["strategy"]
+            strategy = pos["strategy"]
             if strategy not in per_strategy:
                 per_strategy[strategy] = StrategyPnL(
                     strategy=strategy,
@@ -163,11 +164,12 @@ class PnLTracker:
                     loss_count=0,
                 )
 
+            realized_pnl = pos.get("realized_pnl", 0.0)
             per_strategy[strategy].trade_count += 1
-            pnl = trade.get("fees", 0.0)  # realized pnl stored in close trades
-            if pnl > 0:
+            per_strategy[strategy].realized_pnl += realized_pnl
+            if realized_pnl > 0:
                 per_strategy[strategy].win_count += 1
-            elif pnl < 0:
+            elif realized_pnl < 0:
                 per_strategy[strategy].loss_count += 1
 
     def format_summary(self, snapshot: PnLSnapshot | None = None) -> str:

@@ -104,11 +104,7 @@ class PositionManager:
                             else:
                                 new_trailing = price * (1 + trailing / 100)
 
-                            self.db.conn.execute(
-                                "UPDATE positions SET trailing_stop_price = ? WHERE id = ?",
-                                (new_trailing, pos_id),
-                            )
-                            self.db.conn.commit()
+                            self.db.update_position_trailing_stop(pos_id, new_trailing)
 
                             logger.info(
                                 "trailing_stop_set",
@@ -123,19 +119,11 @@ class PositionManager:
                 if side == "BUY":
                     new_trailing = price * (1 - self.config.trailing_stop_pct / 100)
                     if new_trailing > trailing_price:
-                        self.db.conn.execute(
-                            "UPDATE positions SET trailing_stop_price = ? WHERE id = ?",
-                            (new_trailing, pos_id),
-                        )
-                        self.db.conn.commit()
+                        self.db.update_position_trailing_stop(pos_id, new_trailing)
                 elif side == "SELL":
                     new_trailing = price * (1 + self.config.trailing_stop_pct / 100)
                     if new_trailing < trailing_price:
-                        self.db.conn.execute(
-                            "UPDATE positions SET trailing_stop_price = ? WHERE id = ?",
-                            (new_trailing, pos_id),
-                        )
-                        self.db.conn.commit()
+                        self.db.update_position_trailing_stop(pos_id, new_trailing)
 
     async def _close_position(
         self,
@@ -167,6 +155,7 @@ class PositionManager:
             order_type="FOK",  # Immediate execution for exits
             urgency="high",
             reasoning=f"Position close: {reason} (P&L: {pnl_pct:+.1f}%)",
+            metadata={"is_exit": True, "position_id": pos_id},
         )
         await self.order_manager.submit_signal(signal)
 
@@ -204,16 +193,13 @@ class PositionManager:
             order_type="FOK",
             urgency="high",
             reasoning=f"Partial take-profit tier {tier_index}",
+            metadata={"is_exit": True, "position_id": pos_id},
         )
         await self.order_manager.submit_signal(signal)
 
         # Update position size and TP tier
         remaining = position["size"] - sell_size
-        self.db.conn.execute(
-            "UPDATE positions SET size = ?, take_profit_triggered = ? WHERE id = ?",
-            (remaining, tier_index, pos_id),
-        )
-        self.db.conn.commit()
+        self.db.update_position_partial_close(pos_id, remaining, tier_index)
 
         logger.info(
             "partial_close",
@@ -227,6 +213,10 @@ class PositionManager:
         """Handle market resolution.
 
         Addresses: POS-05
+
+        Args:
+            market_id: The condition ID of the resolved market.
+            outcome: The winning token_id, or "yes"/"no" for simple binary markets.
         """
         positions = self.db.get_open_positions()
 
@@ -237,19 +227,33 @@ class PositionManager:
             pos_id = position["id"]
             entry_price = position["entry_price"]
             size = position["size"]
-
-            # If we hold the winning token, profit = (1.0 - entry_price) * size
-            # If we hold the losing token, loss = entry_price * size
+            side = position["side"]
             token_id = position["token_id"]
-            # Determine if this position won
-            # outcome would be the winning token_id or "yes"/"no"
 
-            # Simplified: assume resolution price is 1.0 for winner, 0.0 for loser
-            if position["side"] == "BUY":
-                resolution_price = 1.0  # Placeholder - needs actual resolution data
+            # Determine if this position's token won
+            # outcome can be: the winning token_id, "yes", or "no"
+            outcome_lower = outcome.lower()
+            token_won = (
+                token_id == outcome  # Direct token_id match
+                or (
+                    outcome_lower == "yes"
+                    and token_id == position.get("metadata", {}).get("yes_token_id", "")
+                )
+            )
+
+            # Fallback: if outcome doesn't match token_id directly,
+            # check if the outcome matches the token's side
+            if not token_won and outcome_lower in ("yes", "no"):
+                # We need market context to know which token is yes vs no.
+                # If metadata has the mapping, use it. Otherwise, conservative assumption.
+                pass
+
+            if side == "BUY":
+                resolution_price = 1.0 if token_won else 0.0
                 realized_pnl = (resolution_price - entry_price) * size
             else:
-                resolution_price = 0.0
+                # Short position: wins when token goes to 0
+                resolution_price = 0.0 if token_won else 1.0
                 realized_pnl = (entry_price - resolution_price) * size
 
             self.db.close_position(pos_id, realized_pnl, "market_resolved")
@@ -258,6 +262,7 @@ class PositionManager:
                 "position_resolved",
                 position_id=pos_id,
                 market_id=market_id,
+                token_won=token_won,
                 realized_pnl=round(realized_pnl, 2),
             )
 
