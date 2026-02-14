@@ -1,0 +1,23 @@
+# Tracked Wallets for Copy Trading
+# Add wallet addresses of profitable traders to track
+# Find top performers at: https://polymarket.com/leaderboard
+
+wallets:
+  # Example entry:
+  # - address: "0x1234...abcd"
+  #   name: "Whale Alpha"
+  #   notes: "85% win rate, specializes in politics"
+  #   enabled: true
+  #   max_allocation_usd: 200.0  # Max capital to deploy copying this wallet
+
+  - address: ""
+    name: "Whale 1"
+    notes: "Add address from Polymarket leaderboard"
+    enabled: false
+    max_allocation_usd: 200.0
+
+  - address: ""
+    name: "Whale 2"
+    notes: "Add address from Polymarket leaderboard"
+    enabled: false
+    max_allocation_usd: 200.0

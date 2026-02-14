@@ -1,0 +1,84 @@
+# Strategy Configuration
+# All thresholds and allocations configurable without code changes
+
+# Global settings
+global:
+  # Maximum percentage of portfolio for any single position
+  max_position_pct: 15.0
+  # Maximum number of simultaneous open positions
+  max_open_positions: 10
+  # Minimum edge (%) required after all fees to place a trade
+  min_edge_pct: 5.0
+  # Minimum cash reserve (% of portfolio) to maintain at all times
+  min_cash_reserve_pct: 10.0
+  # Daily loss limit (% of portfolio) - halt all trades if exceeded
+  daily_loss_limit_pct: 10.0
+  # Minimum position size in USDC (below this, fees eat profits)
+  min_position_size_usd: 25.0
+
+# Per-strategy configuration
+strategies:
+  copy_trader:
+    enabled: true
+    # Maximum % of portfolio allocated to copy trading
+    allocation_pct: 40.0
+    # How to size copy trades: "fixed", "portfolio_pct", "whale_pct"
+    sizing_method: "fixed"
+    # Fixed dollar amount per copy trade (when sizing_method=fixed)
+    fixed_size_usd: 50.0
+    # Portfolio % per trade (when sizing_method=portfolio_pct)
+    portfolio_pct_per_trade: 5.0
+    # % of whale's trade to copy (when sizing_method=whale_pct)
+    whale_pct: 10.0
+    # Minimum whale position size to trigger copy (conviction filter)
+    min_whale_position_usd: 500.0
+    # Maximum slippage vs whale's entry price (skip if worse)
+    max_slippage_pct: 5.0
+    # Polling interval in seconds for checking whale positions
+    poll_interval_sec: 30
+    # Order type for copy trades
+    order_type: "GTC"
+
+  arb_scanner:
+    enabled: true
+    # Maximum % of portfolio allocated to arbitrage
+    allocation_pct: 10.0
+    # Minimum parity gap (Yes+No must be below this) after fees
+    min_gap_threshold: 0.95
+    # Scan interval in seconds
+    scan_interval_sec: 60
+    # Order type for arb trades (FOK for simultaneous execution)
+    order_type: "FOK"
+
+  stink_bidder:
+    enabled: true
+    # Maximum % of portfolio allocated to stink bids
+    allocation_pct: 20.0
+    # Discount range: place bids at X% below current price
+    min_discount_pct: 70.0
+    max_discount_pct: 90.0
+    # Maximum number of simultaneous stink bids
+    max_active_bids: 10
+    # Refresh interval for expired bids (seconds)
+    refresh_interval_sec: 300
+    # Minimum daily volume for market selection
+    min_market_volume_usd: 10000.0
+
+# Position management
+positions:
+  # Take-profit rules (can have multiple tiers)
+  take_profit:
+    - gain_pct: 50.0
+      sell_pct: 50.0
+    - gain_pct: 100.0
+      sell_pct: 100.0
+  # Stop-loss threshold
+  stop_loss_pct: 25.0
+  # Trailing stop (activates after first TP tier hit)
+  trailing_stop_pct: 10.0
+
+# Fee assumptions (update if Polymarket changes fee structure)
+fees:
+  winner_fee_pct: 2.0
+  max_taker_fee_pct: 3.15
+  estimated_gas_usd: 0.03

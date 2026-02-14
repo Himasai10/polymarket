@@ -128,58 +128,58 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CORE-01 | TBD | Pending |
-| CORE-02 | TBD | Pending |
-| CORE-03 | TBD | Pending |
-| CORE-04 | TBD | Pending |
-| CORE-05 | TBD | Pending |
-| CORE-06 | TBD | Pending |
-| CORE-07 | TBD | Pending |
-| CORE-08 | TBD | Pending |
-| CORE-09 | TBD | Pending |
-| CORE-10 | TBD | Pending |
-| CORE-11 | TBD | Pending |
-| COPY-01 | TBD | Pending |
-| COPY-02 | TBD | Pending |
-| COPY-03 | TBD | Pending |
-| COPY-04 | TBD | Pending |
-| COPY-05 | TBD | Pending |
-| COPY-06 | TBD | Pending |
-| ARB-01 | TBD | Pending |
-| ARB-02 | TBD | Pending |
-| ARB-03 | TBD | Pending |
-| STINK-01 | TBD | Pending |
-| STINK-02 | TBD | Pending |
-| STINK-03 | TBD | Pending |
-| POS-01 | TBD | Pending |
-| POS-02 | TBD | Pending |
-| POS-03 | TBD | Pending |
-| POS-04 | TBD | Pending |
-| POS-05 | TBD | Pending |
-| RISK-01 | TBD | Pending |
-| RISK-02 | TBD | Pending |
-| RISK-03 | TBD | Pending |
-| RISK-04 | TBD | Pending |
-| RISK-05 | TBD | Pending |
-| RISK-06 | TBD | Pending |
-| RISK-07 | TBD | Pending |
-| TG-01 | TBD | Pending |
-| TG-02 | TBD | Pending |
-| TG-03 | TBD | Pending |
-| TG-04 | TBD | Pending |
-| TG-05 | TBD | Pending |
-| TG-06 | TBD | Pending |
-| TG-07 | TBD | Pending |
-| TG-08 | TBD | Pending |
-| DEPLOY-01 | TBD | Pending |
-| DEPLOY-02 | TBD | Pending |
-| DEPLOY-03 | TBD | Pending |
-| DEPLOY-04 | TBD | Pending |
+| CORE-01 | Phase 1 | Pending |
+| CORE-02 | Phase 1 | Pending |
+| CORE-03 | Phase 1 | Pending |
+| CORE-04 | Phase 1 | Pending |
+| CORE-05 | Phase 1 | Pending |
+| CORE-06 | Phase 1 | Pending |
+| CORE-07 | Phase 1 | Pending |
+| CORE-08 | Phase 1 + Phase 5 | Pending |
+| CORE-09 | Phase 1 + Phase 5 | Pending |
+| CORE-10 | Phase 1 | Pending |
+| CORE-11 | Phase 1 | Pending |
+| COPY-01 | Phase 2 | Pending |
+| COPY-02 | Phase 2 | Pending |
+| COPY-03 | Phase 2 | Pending |
+| COPY-04 | Phase 2 | Pending |
+| COPY-05 | Phase 2 | Pending |
+| COPY-06 | Phase 2 | Pending |
+| ARB-01 | Phase 4 | Pending |
+| ARB-02 | Phase 4 | Pending |
+| ARB-03 | Phase 4 | Pending |
+| STINK-01 | Phase 4 | Pending |
+| STINK-02 | Phase 4 | Pending |
+| STINK-03 | Phase 4 | Pending |
+| POS-01 | Phase 2 | Pending |
+| POS-02 | Phase 2 | Pending |
+| POS-03 | Phase 2 | Pending |
+| POS-04 | Phase 2 | Pending |
+| POS-05 | Phase 2 | Pending |
+| RISK-01 | Phase 1 | Pending |
+| RISK-02 | Phase 1 | Pending |
+| RISK-03 | Phase 2 | Pending |
+| RISK-04 | Phase 2 | Pending |
+| RISK-05 | Phase 2 | Pending |
+| RISK-06 | Phase 1 | Pending |
+| RISK-07 | Phase 1 | Pending |
+| TG-01 | Phase 3 | Pending |
+| TG-02 | Phase 3 | Pending |
+| TG-03 | Phase 3 | Pending |
+| TG-04 | Phase 3 | Pending |
+| TG-05 | Phase 3 | Pending |
+| TG-06 | Phase 3 | Pending |
+| TG-07 | Phase 3 | Pending |
+| TG-08 | Phase 3 | Pending |
+| DEPLOY-01 | Phase 5 | Pending |
+| DEPLOY-02 | Phase 5 | Pending |
+| DEPLOY-03 | Phase 5 | Pending |
+| DEPLOY-04 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 43 total
-- Mapped to phases: 0 (awaiting roadmap creation)
-- Unmapped: 43
+- Mapped to phases: 43
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-13*
