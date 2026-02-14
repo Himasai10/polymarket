@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///data/polybot.db"
 
+    # Health check HTTP server port (DEPLOY-03)
+    health_port: int = 8080
+
     @field_validator("trading_mode")
     @classmethod
     def validate_trading_mode(cls, v: str) -> str:

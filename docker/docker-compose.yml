@@ -1,0 +1,67 @@
+# ============================================================
+# Polymarket Trading Bot — Docker Compose
+# ============================================================
+# DEPLOY-01: docker-compose up starts the bot
+# DEPLOY-02: restart: unless-stopped auto-recovers from crashes
+# CORE-08: SQLite persisted via named volume
+# CORE-09: Logs persisted via named volume
+# ============================================================
+
+services:
+  polybot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: polybot
+    restart: unless-stopped
+
+    # Pass env file with secrets
+    env_file:
+      - ../.env
+
+    # Override specific env vars for production
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TRADING_MODE=${TRADING_MODE:-paper}
+      - DATABASE_URL=sqlite:///app/data/polybot.db
+      - HEALTH_PORT=8080
+
+    # Persistent storage
+    volumes:
+      # SQLite database survives container restarts (CORE-08)
+      - polybot-data:/app/data
+      # Logs survive container restarts (CORE-09)
+      - polybot-logs:/app/logs
+      # Strategy/wallet config (read-only)
+      - ../config/strategies.yaml:/app/config/strategies.yaml:ro
+      - ../config/wallets.yaml:/app/config/wallets.yaml:ro
+
+    # Health check port
+    ports:
+      - "${HEALTH_PORT:-8080}:8080"
+
+    # Graceful shutdown: give the bot time to cancel orders
+    stop_grace_period: 30s
+
+    # Resource limits (prevent runaway memory on small VPS)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+          cpus: "0.25"
+
+    # Logging driver: limit log size on disk
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  polybot-data:
+    driver: local
+  polybot-logs:
+    driver: local

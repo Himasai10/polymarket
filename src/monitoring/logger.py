@@ -7,6 +7,7 @@ Provides consistent, queryable JSON logs across all modules.
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sys
 from pathlib import Path
 
@@ -17,6 +18,8 @@ def setup_logging(
     log_level: str = "INFO",
     json_output: bool = True,
     log_file: str | None = None,
+    max_bytes: int = 10 * 1024 * 1024,  # 10 MB per file
+    backup_count: int = 5,
 ) -> None:
     """Configure structlog for the entire application.
 
@@ -24,6 +27,8 @@ def setup_logging(
         log_level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
         json_output: If True, output JSON lines. If False, pretty console output.
         log_file: Optional path to a log file. If set, logs are also written to file.
+        max_bytes: Max size per log file before rotation (default 10 MB).
+        backup_count: Number of rotated log files to keep (default 5).
     """
     # Shared processors for all output
     shared_processors: list[structlog.types.Processor] = [
@@ -68,7 +73,7 @@ def setup_logging(
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
-    # Optional file handler
+    # Optional file handler with rotation (CORE-09 production)
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +84,12 @@ def setup_logging(
                 structlog.processors.JSONRenderer(),
             ],
         )
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            encoding="utf-8",
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+        )
         file_handler.setFormatter(file_json_formatter)
         root_logger.addHandler(file_handler)
 

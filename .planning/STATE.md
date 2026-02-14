@@ -5,13 +5,13 @@
 See: .planning/PROJECT.md (updated 2026-02-13)
 
 **Core value:** The bot must consistently make profitable trades with real money on Polymarket
-**Current focus:** Phase 4 COMPLETE — Arbitrage and Stink Bid strategies implemented and tested
+**Current focus:** Phase 5 COMPLETE — All 5 phases of v1 implemented and tested
 
 ## Current Status
 
-**Stage:** Phase 4 - COMPLETE
-**Last action:** Implemented ArbScanner and StinkBidder strategies, wired them into TradingBot, and verified with 152 unit tests.
-**Next action:** Move to Phase 5 - Deployment & Production
+**Stage:** Phase 5 - COMPLETE (v1 DONE)
+**Last action:** Implemented Docker deployment, HTTP health endpoint, production log rotation, and 23 deployment tests.
+**Next action:** Configure real whale wallets, deploy to VPS, and begin live paper trading.
 
 ## What's Been Done
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-02-13)
    - Phase 2: Copy Trading + Position Management (14 requirements) ✅
    - Phase 3: Telegram Integration (8 requirements) ✅
    - Phase 4: Arbitrage & Stink Bids (6 requirements) ✅
-   - Phase 5: Deployment & Production (6 requirements)
+   - Phase 5: Deployment & Production (6 requirements) ✅
 6. **Phase 1 COMPLETE** — All original 60 unit tests passing:
    - **Core**: Settings, StrategyConfig, WalletConfig, Database, RateLimiter, WebSocket
    - **Client**: PolymarketClient wrapping CLOB + Gamma + Data APIs
@@ -56,16 +56,34 @@ See: .planning/PROJECT.md (updated 2026-02-13)
    - ✅ **Strategy Wiring**: Both strategies registered in `TradingBot` and configurable via `strategies.yaml`
    - ✅ **Phase 4 tests**: 14 new unit tests covering scanning, execution logic, and edge cases
    - ✅ **Full test suite**: 152 tests, all passing
+10. **Phase 5 COMPLETE** — Deployment & Production Hardening (all 6 requirements addressed):
+    - ✅ **Dockerfile** (`docker/Dockerfile`): Multi-stage build, non-root user, HEALTHCHECK, SIGTERM (DEPLOY-01)
+    - ✅ **docker-compose.yml** (`docker/docker-compose.yml`): restart:unless-stopped, named volumes, resource limits, 30s stop grace period (DEPLOY-01, DEPLOY-02)
+    - ✅ **HTTP Health Endpoint** (`src/monitoring/health_server.py`): `/health`, `/ready`, `/` endpoints via asyncio server (DEPLOY-03)
+    - ✅ **Graceful Shutdown**: SIGTERM → cancel orders → save state → close connections (DEPLOY-04)
+    - ✅ **Production Logging**: RotatingFileHandler (10MB x 5 files), JSON output, Docker json-file driver with 10MB x 3 rotation (CORE-09)
+    - ✅ **Database Persistence**: SQLite persisted via Docker named volume `polybot-data` (CORE-08)
+    - ✅ **Health Server Wired**: Integrated into TradingBot lifecycle (start/stop)
+    - ✅ **Phase 5 tests**: 23 new unit tests covering health server, Docker config, logging, config
+    - ✅ **Full test suite**: 175 tests, all passing
 
 ## What's Left
 
-### Phase 5: Deployment & Production (not started)
+### v1 is COMPLETE — All 43 requirements implemented across 5 phases
 
-1. **Dockerfile**: Multi-stage build for production
-2. **docker-compose.yml**: With environment configuration
-3. **Health endpoint**: HTTP health check for monitoring
-4. **Production hardening**: Rate limit tuning, error handling
-5. **Documentation**: Deployment guide, troubleshooting
+**Pre-deployment checklist (manual):**
+1. Configure real whale wallets in `config/wallets.yaml`
+2. Set up `.env` with real Polymarket API keys
+3. Set up Telegram bot via @BotFather
+4. Deploy to VPS: `cd docker && docker-compose up -d`
+5. Monitor via Telegram commands and `/health` endpoint
+6. Start in paper mode, validate, then switch to live
+
+### Deferred to v2:
+- AI prediction engine (`src/ai/` stub exists)
+- Backtesting framework (`src/backtest/`)
+- Web dashboard
+- Multi-exchange support
 
 ## Resume Instructions
 
@@ -73,16 +91,15 @@ To continue from where we left off:
 
 ```bash
 cd /Users/himasaitummala/polymarket-bot
-# 152 tests passing (Phase 1 through Phase 4)
+# 175 tests passing (Phase 1 through Phase 5)
 uv run pytest tests/ -v  # Verify
 
-# Phase 4 COMPLETE: Passive strategies (Arb + Stink) implemented
-# NEXT: Phase 5 - Deployment & Production
-# Key files to create:
-#   - Dockerfile
-#   - docker-compose.yml
-#   - deploy.sh (optional)
-# Read .planning/ROADMAP.md for Phase 5 requirements
+# ALL PHASES COMPLETE — v1 is ready for deployment
+# To deploy:
+#   1. Copy config/.env.example to .env and fill in credentials
+#   2. Edit config/wallets.yaml with real whale addresses
+#   3. cd docker && docker-compose up -d
+#   4. Monitor: curl http://localhost:8080/health
 ```
 
 ## Files
@@ -102,16 +119,18 @@ uv run pytest tests/ -v  # Verify
 | pyproject.toml | Complete | pyproject.toml |
 | src/core/ | Complete | All 6 modules |
 | src/execution/ | Complete | OrderManager, PositionManager, RiskManager |
-| src/monitoring/ | Complete | PnL, Health, Logging |
+| src/monitoring/ | Complete | PnL, Health, HealthServer, Logging |
 | src/strategies/base.py | Complete | Abstract base class |
 | src/strategies/copy_trader.py | Complete | Copy Trading strategy |
-| src/strategies/arb_scanner.py | **NEW** | Arbitrage strategy |
-| src/strategies/stink_bidder.py | **NEW** | Stink Bid strategy |
+| src/strategies/arb_scanner.py | Complete | Arbitrage strategy |
+| src/strategies/stink_bidder.py | Complete | Stink Bid strategy |
 | src/notifications/telegram.py | Complete | Telegram integration |
-| src/main.py | Updated | Wired new strategies |
-| tests/unit/test_arb_scanner.py | **NEW** | 7 tests |
-| tests/unit/test_stink_bidder.py | **NEW** | 7 tests |
-| tests/ | Updated | 152 total tests, all passing |
+| src/main.py | Updated | Wired health server |
+| docker/Dockerfile | **NEW** | Multi-stage production build |
+| docker/docker-compose.yml | **NEW** | Full deployment config |
+| src/monitoring/health_server.py | **NEW** | HTTP health endpoint |
+| tests/unit/test_deployment.py | **NEW** | 23 deployment tests |
+| tests/ | Updated | 175 total tests, all passing |
 
 ## Key Decisions Made
 
@@ -121,12 +140,17 @@ uv run pytest tests/ -v  # Verify
 - Passive Strategies: Arb Scanner (10%) + Stink Bids (20%) added in Phase 4
 - Telegram for notifications (no web dashboard in v1)
 - Paper trading deferred to v2 (validate with copy trading first)
+- Docker with uv for fast builds, non-root user for security
+- Health endpoint via stdlib asyncio (no extra deps like aiohttp/fastapi)
+- RotatingFileHandler for log rotation (10MB x 5 backups)
 
 ## Discoveries
 
 - **Arb Opportunities**: Fee structure (2% winner + ~3% taker) means opportunities require >5% gap (Yes+No < 0.95).
 - **Stink Bids**: Must use GTC orders and reconcile against CLOB state to handle expirations.
 - **Order Execution**: Simultaneous FOK orders used for arb to eliminate leg risk.
+- **Health Server**: stdlib asyncio.start_server avoids adding aiohttp/fastapi as dependency — keeps the container lean.
+- **Docker Volumes**: Named volumes (not bind mounts) for data/logs — portable across VPS providers.
 
 ---
-*Last updated: 2026-02-14 — Phase 4 COMPLETE, 152 tests passing*
+*Last updated: 2026-02-14 — Phase 5 COMPLETE, v1 DONE, 175 tests passing*

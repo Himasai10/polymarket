@@ -30,6 +30,7 @@ from .execution.order_manager import OrderManager
 from .execution.position_manager import PositionManager
 from .execution.risk_manager import RiskManager
 from .monitoring.health import HealthChecker
+from .monitoring.health_server import HealthServer
 from .monitoring.logger import setup_logging
 from .monitoring.pnl import PnLTracker
 from .notifications.telegram import TelegramCommandBot, TelegramNotifier
@@ -89,6 +90,13 @@ class TradingBot:
         self._pnl_tracker = PnLTracker(self._db, self._wallet)
         self._health_checker = HealthChecker(
             self._client, self._db, self._wallet, self._ws, notifier=self._notifier
+        )
+
+        # Health HTTP server (DEPLOY-03)
+        self._health_server = HealthServer(
+            self._health_checker,
+            host="0.0.0.0",
+            port=settings.health_port,
         )
 
         # Register strategies
@@ -253,6 +261,11 @@ class TradingBot:
         # Collect all long-running tasks
         tasks: list[asyncio.Task] = []
 
+        # Start HTTP health server (DEPLOY-03)
+        health_server_task = asyncio.create_task(self._health_server.start())
+        tasks.append(health_server_task)
+        self._health_server.set_ready(True)
+
         # Start WebSocket
         ws_task = asyncio.create_task(self._ws.start())
         tasks.append(ws_task)
@@ -347,10 +360,14 @@ class TradingBot:
         await self._notifier.stop()
         await self._command_bot.stop()
 
-        # 7. Close API client
+        # 7. Stop health server
+        await self._health_server.stop()
+        self._health_server.set_ready(False)
+
+        # 8. Close API client
         await self._client.close()
 
-        # 8. Close database last
+        # 9. Close database last
         self._db.close()
 
         logger.info("bot_shutdown_complete")
