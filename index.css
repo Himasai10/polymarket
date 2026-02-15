@@ -1,0 +1,205 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@500;700&display=swap');
+
+:root {
+    --bg-gradient: radial-gradient(circle at 20% 10%, #fff4ea, #ffd8cf);
+    --panel-bg: rgba(255, 255, 255, 0.7);
+    --panel-border: rgba(255, 255, 255, 0.4);
+    --ink: #2f1d27;
+    --accent: #ff4f87;
+    --accent-glow: rgba(255, 79, 135, 0.4);
+    --yes: #2fbf71;
+    --no: #ff5f6d;
+    --glass-blur: blur(12px);
+    --radius-lg: 24px;
+    --radius-md: 16px;
+    --font-main: 'Inter', sans-serif;
+    --font-heading: 'Outfit', sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-gradient);
+    color: var(--ink);
+    font-family: var(--font-main);
+    overflow: hidden;
+}
+
+.game-shell {
+    position: relative;
+    width: min(96vw, 1000px);
+    aspect-ratio: 16 / 9;
+    border: 8px solid rgba(47, 29, 39, 0.1);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: 
+        0 24px 48px rgba(47, 29, 39, 0.15),
+        0 8px 16px rgba(47, 29, 39, 0.05);
+    background: #000;
+}
+
+#gameCanvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: auto;
+    background: #fdf2f4;
+}
+
+.overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 245, 247, 0.4);
+    backdrop-filter: var(--glass-blur);
+    padding: 32px;
+    text-align: center;
+    z-index: 10;
+    opacity: 1;
+    transition: opacity 0.4s ease, visibility 0.4s;
+}
+
+.overlay[hidden] {
+    opacity: 0;
+    visibility: hidden;
+    display: flex; /* Keep layout but hide */
+    pointer-events: none;
+}
+
+.card {
+    width: min(92%, 600px);
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-lg);
+    padding: 40px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(20px);
+}
+
+h1 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: clamp(2rem, 4vw, 3rem);
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, var(--accent), #ff8a65);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+h2 {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: clamp(1.5rem, 3vw, 2.2rem);
+    margin-bottom: 12px;
+}
+
+p {
+    font-size: 1.1rem;
+    line-height: 1.6;
+    margin: 0 0 16px 0;
+    opacity: 0.85;
+}
+
+.hint {
+    font-size: 0.9rem;
+    font-weight: 600;
+    background: rgba(47, 29, 39, 0.05);
+    padding: 8px 16px;
+    border-radius: 20px;
+    display: inline-block;
+    margin-top: 16px;
+}
+
+.actions {
+    margin-top: 32px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
+    position: relative;
+    min-height: 60px;
+}
+
+button {
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1.1rem;
+    padding: 14px 28px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+button:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+button:active {
+    transform: translateY(-1px);
+}
+
+#startBtn {
+    background: var(--accent);
+    color: #fff;
+}
+
+#startBtn:hover {
+    box-shadow: 0 8px 24px var(--accent-glow);
+}
+
+#yesBtn {
+    background: var(--yes);
+    color: #fff;
+}
+
+#noBtn {
+    position: absolute;
+    background: var(--no);
+    color: #fff;
+    touch-action: none;
+}
+
+#acceptedOverlay {
+    background: rgba(30, 12, 24, 0.6);
+}
+
+#acceptedOverlay .card {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+}
+
+#acceptedOverlay h2 {
+    background: linear-gradient(135deg, #fff, #ffe3ef);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+@media (max-width: 640px) {
+    .game-shell {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+        border: none;
+        aspect-ratio: auto;
+    }
+
+    .card {
+        padding: 24px;
+        width: 100%;
+    }
+
+    h1 { font-size: 1.8rem; }
+}

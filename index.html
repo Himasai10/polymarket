@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ashi Valentine Quest</title>
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50' font-size='48'%3E%F0%9F%92%96%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="index.css">
+</head>
+
+<body>
+  <main class="game-shell">
+    <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+    <section id="introOverlay" class="overlay">
+      <div class="card">
+        <h1>Ashi Valentine Quest</h1>
+        <p>Hey Ashi! Help our pixel hero collect treasures across Boston, Philly, and London to reach the final level.
+        </p>
+        <div class="hint">Left/Right = Walk • Up = Jump • Down = Slide</div>
+        <div class="actions">
+          <button id="startBtn">Start the Quest</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="finalOverlay" class="overlay" hidden>
+      <div class="card">
+        <h1>Ashi, will you be my valentine?</h1>
+        <p>After all those levels... there's only one question left.</p>
+        <div id="finalActions" class="actions">
+          <button id="yesBtn">Yes</button>
+          <button id="noBtn" aria-label="No">No</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="acceptedOverlay" class="overlay" hidden>
+      <div class="card">
+        <h1>She said YES! 🎉</h1>
+        <p>Trickly Dickly#2, you make every level of life better.</p>
+        <p>Happy Valentine’s Day! I love you ❤️</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+
+</html>
