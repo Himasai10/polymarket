@@ -119,7 +119,7 @@ class HealthServer:
             else:
                 await self._send_response(writer, 404, {"error": "not found"})
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         except Exception:
             logger.debug("health_server_connection_error", exc_info=True)
@@ -154,7 +154,7 @@ class HealthServer:
         self,
         writer: asyncio.StreamWriter,
         status_code: int,
-        body: dict,
+        body: dict[str, object],
     ) -> None:
         """Send an HTTP response.
 

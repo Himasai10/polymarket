@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import html
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from telegram import Bot, Update
@@ -183,7 +183,7 @@ class TelegramNotifier:
                 msg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
                 await self._send(msg)
                 await asyncio.sleep(_MSG_INTERVAL)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 # M-10: On cancellation, drain remaining messages before exiting
@@ -222,7 +222,7 @@ class TelegramCommandBot:
         self._bot_token = settings.telegram_bot_token.get_secret_value()
         self._chat_id = settings.telegram_chat_id
         self._enabled = bool(self._bot_token and self._chat_id)
-        self._app: Application | None = None
+        self._app: Application | None = None  # type: ignore[type-arg]
 
         # Callbacks injected by TradingBot.  Each returns a string to send back.
         self._get_status: Callable[[], Coroutine[Any, Any, str]] | None = None
@@ -269,14 +269,14 @@ class TelegramCommandBot:
 
         await self._app.initialize()
         await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        await self._app.updater.start_polling(drop_pending_updates=True)  # type: ignore[union-attr]
         logger.info("telegram_command_bot_started")
 
     async def stop(self) -> None:
         """Stop the polling loop and shut down."""
         if self._app:
             try:
-                await self._app.updater.stop()
+                await self._app.updater.stop()  # type: ignore[union-attr]
                 await self._app.stop()
                 await self._app.shutdown()
             except Exception:

@@ -6,7 +6,6 @@ Tests: TG-01 through TG-08
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -63,23 +62,23 @@ class TestTelegramNotifier:
 
     @pytest.mark.asyncio
     async def test_initialize_creates_bot(self, notifier):
-        with patch("src.notifications.telegram.Bot") as MockBot:
+        with patch("src.notifications.telegram.Bot") as mock_bot_cls:
             mock_bot = AsyncMock()
             mock_bot.get_me.return_value = MagicMock(username="testbot")
-            MockBot.return_value = mock_bot
+            mock_bot_cls.return_value = mock_bot
 
             await notifier.initialize()
 
-            MockBot.assert_called_once_with(token="test_token")
+            mock_bot_cls.assert_called_once_with(token="test_token")
             mock_bot.get_me.assert_called_once()
             assert notifier._bot is not None
 
     @pytest.mark.asyncio
     async def test_initialize_handles_error(self, notifier):
-        with patch("src.notifications.telegram.Bot") as MockBot:
+        with patch("src.notifications.telegram.Bot") as mock_bot_cls:
             mock_bot = AsyncMock()
             mock_bot.get_me.side_effect = Exception("Connection failed")
-            MockBot.return_value = mock_bot
+            mock_bot_cls.return_value = mock_bot
 
             await notifier.initialize()
 
@@ -87,9 +86,9 @@ class TestTelegramNotifier:
 
     @pytest.mark.asyncio
     async def test_send_loop_processes_queue(self, notifier):
-        with patch("src.notifications.telegram.Bot") as MockBot:
+        with patch("src.notifications.telegram.Bot") as mock_bot_cls:
             mock_bot = AsyncMock()
-            MockBot.return_value = mock_bot
+            mock_bot_cls.return_value = mock_bot
             notifier._bot = mock_bot
 
             # Add message to queue

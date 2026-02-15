@@ -16,6 +16,7 @@ WORKDIR /app
 
 # Copy dependency files first (layer caching)
 COPY pyproject.toml uv.lock ./
+COPY README.md ./
 
 # Install production dependencies only (no dev deps)
 RUN uv sync --frozen --no-dev --no-install-project
@@ -45,6 +46,7 @@ COPY --from=builder /app/src /app/src
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/scripts /app/scripts
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
+COPY --from=builder /app/README.md /app/README.md
 
 # Create data directory for SQLite persistence (mounted as volume)
 RUN mkdir -p /app/data /app/logs && chown -R polybot:polybot /app

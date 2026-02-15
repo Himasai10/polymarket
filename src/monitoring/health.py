@@ -7,9 +7,9 @@ database connection, and wallet balance.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class ComponentStatus(str, Enum):
+class ComponentStatus(StrEnum):
     """Health status for a single component."""
 
     HEALTHY = "healthy"
@@ -56,7 +56,7 @@ class SystemHealth:
     def is_healthy(self) -> bool:
         return self.overall == ComponentStatus.HEALTHY
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "timestamp": self.timestamp.isoformat(),
             "overall": self.overall.value,
@@ -89,14 +89,22 @@ class HealthChecker:
         self._wallet = wallet
         self._ws = ws_manager
         self._notifier = notifier
-        self._start_time = datetime.now(timezone.utc)
+        self._start_time = datetime.now(UTC)
 
     @property
     def uptime_seconds(self) -> float:
-        return (datetime.now(timezone.utc) - self._start_time).total_seconds()
+        return (datetime.now(UTC) - self._start_time).total_seconds()
 
     def check_websocket(self) -> ComponentHealth:
         """Check WebSocket connection status."""
+        # In paper mode without wallet, WebSocket is intentionally disabled
+        if not self._ws._settings.is_live:
+            return ComponentHealth(
+                name="websocket",
+                status=ComponentStatus.HEALTHY,
+                message="Disabled in paper mode (HTTP polling active)",
+            )
+
         if self._ws.is_connected and not self._ws.is_stale:
             return ComponentHealth(
                 name="websocket",
@@ -110,10 +118,11 @@ class HealthChecker:
                 message=f"Connected but stale ({self._ws.seconds_since_last_message:.0f}s)",
             )
         else:
+            # WebSocket is down but bot can still function via HTTP polling
             return ComponentHealth(
                 name="websocket",
-                status=ComponentStatus.DOWN,
-                message="Disconnected",
+                status=ComponentStatus.DEGRADED,
+                message="Disconnected (using HTTP fallback)",
             )
 
     def check_database(self) -> ComponentHealth:
@@ -164,20 +173,13 @@ class HealthChecker:
             markets = await self._client.get_markets(limit=1)
             latency = (time.monotonic() - start) * 1000
 
-            if markets:
-                return ComponentHealth(
-                    name="api",
-                    status=ComponentStatus.HEALTHY,
-                    message="Gamma API responsive",
-                    latency_ms=round(latency, 1),
-                )
-            else:
-                return ComponentHealth(
-                    name="api",
-                    status=ComponentStatus.DEGRADED,
-                    message="API returned no markets",
-                    latency_ms=round(latency, 1),
-                )
+            # API is healthy if it responds successfully (markets may be empty due to filtering)
+            return ComponentHealth(
+                name="api",
+                status=ComponentStatus.HEALTHY,
+                message=f"Gamma API responsive ({len(markets)} markets)",
+                latency_ms=round(latency, 1),
+            )
         except Exception as e:
             return ComponentHealth(
                 name="api",
@@ -205,7 +207,7 @@ class HealthChecker:
             overall = ComponentStatus.HEALTHY
 
         health = SystemHealth(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             overall=overall,
             components=components,
             uptime_seconds=self.uptime_seconds,

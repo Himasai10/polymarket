@@ -1,12 +1,13 @@
 """Unit tests for ArbScanner strategy (Phase 4)."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.core.client import Market
 from src.core.config import StrategyConfig
 from src.core.db import Database
-from src.execution.order_manager import OrderManager, Signal
+from src.execution.order_manager import OrderManager
 from src.execution.risk_manager import RiskManager
 from src.strategies.arb_scanner import ArbScanner
 

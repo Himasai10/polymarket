@@ -13,16 +13,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.core.client import Market
 from src.core.config import StrategyConfig, WalletConfig
 from src.core.db import Database
-from src.execution.order_manager import Signal
 from src.strategies.copy_trader import CopyTrader
-
 
 # ─── Fixtures ─────────────────────────────────────────────────────
 
@@ -382,7 +380,7 @@ class TestCopyTraderDetection:
         mock_client.get_price = AsyncMock(return_value=0.50)
 
         # Should not raise; second wallet should still produce signals
-        signals = await copy_trader.evaluate()
+        await copy_trader.evaluate()
         assert call_count == 2  # Both wallets attempted
 
 
@@ -594,7 +592,7 @@ class TestCopyTraderPerformance:
     def test_wallet_performance_with_closed_positions(self, copy_trader: CopyTrader, db: Database):
         """Performance tracks wins/losses from closed positions."""
         address = copy_trader._wallet_config.enabled_wallets[0]["address"]
-        metadata = json.dumps({"source_wallet": address})
+        _ = json.dumps({"source_wallet": address})
 
         # Create two closed positions: one win, one loss
         pos_id1 = db.open_position(

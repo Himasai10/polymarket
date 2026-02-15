@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import logging
-from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import structlog
 
 from src.monitoring.health import ComponentStatus, HealthChecker, SystemHealth
-from src.monitoring.logger import setup_logging, get_logger, log_trade
-from src.monitoring.pnl import PnLTracker, PnLSnapshot
+from src.monitoring.logger import get_logger, log_trade, setup_logging
+from src.monitoring.pnl import PnLSnapshot, PnLTracker
 
 
 class TestLogger:

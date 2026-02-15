@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -113,8 +112,8 @@ class ArbScanner(BaseStrategy):
         """Load persisted counters from strategy state."""
         raw_opps = self.get_state("total_opportunities", 0)
         raw_exec = self.get_state("total_executed", 0)
-        self._total_opportunities = int(raw_opps) if raw_opps is not None else 0  # type: ignore[arg-type]
-        self._total_executed = int(raw_exec) if raw_exec is not None else 0  # type: ignore[arg-type]
+        self._total_opportunities = int(raw_opps) if raw_opps is not None else 0  # type: ignore[call-overload]
+        self._total_executed = int(raw_exec) if raw_exec is not None else 0  # type: ignore[call-overload]
         logger.info(
             "arb_scanner_initialized",
             min_gap_threshold=self._min_gap_threshold,
@@ -162,8 +161,12 @@ class ArbScanner(BaseStrategy):
                         title="Arbitrage Detected",
                         message=(
                             f"Market: {market.question[:60]}\n"
-                            f"Yes: ${opportunity.yes_price:.4f} + No: ${opportunity.no_price:.4f} = ${opportunity.total_price:.4f}\n"
-                            f"Gap: {opportunity.gap:.4f} ({opportunity.estimated_profit_pct:+.2f}% after fees)\n"
+                            f"Yes: ${opportunity.yes_price:.4f}"
+                            f" + No: ${opportunity.no_price:.4f}"
+                            f" = ${opportunity.total_price:.4f}\n"
+                            f"Gap: {opportunity.gap:.4f}"
+                            f" ({opportunity.estimated_profit_pct:+.2f}%"
+                            f" after fees)\n"
                             f"Size: ${opportunity.size_usd:.2f}"
                         ),
                         level="info",
@@ -357,7 +360,7 @@ class ArbScanner(BaseStrategy):
             total_executed=self._total_executed,
         )
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Extended status for health reporting."""
         base = super().get_status()
         base.update(

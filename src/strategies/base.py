@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from typing import Any
 
 import structlog
 
@@ -53,8 +54,8 @@ class BaseStrategy(ABC):
         self._strategy_config = strategy_config
 
         self._running = False
-        self._eval_task: asyncio.Task | None = None
-        self._state: dict = {}
+        self._eval_task: asyncio.Task[None] | None = None
+        self._state: dict[str, object] = {}
 
         # Get strategy-specific config section
         self._config = self._strategy_config.get_strategy(name) or {}
@@ -226,7 +227,7 @@ class BaseStrategy(ABC):
             category=category,
         )
 
-    def get_open_positions(self) -> list[dict]:
+    def get_open_positions(self) -> list[dict[str, Any]]:
         """Get this strategy's currently open positions."""
         return self._db.get_open_positions(strategy=self.name)
 
@@ -241,7 +242,7 @@ class BaseStrategy(ABC):
         """
         self._state[key] = value
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get strategy status for health/status reporting."""
         return {
             "name": self.name,

@@ -1,0 +1,58 @@
+# ============================================================
+# Docker build context exclusions
+# Keeps the build context small and prevents secrets from
+# leaking into the image.
+# ============================================================
+
+# Secrets — NEVER copy into an image
+.env
+*.env
+!config/.env.example
+
+# Version control
+.git/
+.gitignore
+
+# Virtual environments (the image builds its own)
+.venv/
+venv/
+
+# Testing and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime data (mounted as volumes in production)
+data/
+logs/
+
+# Planning and documentation (not needed at runtime)
+.planning/
+AUDIT.md
+PRD.md
+*.md
+!README.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.whl
+*.tar.gz
+*.egg
+
+# Docker (avoid recursive copy)
+docker/secrets/

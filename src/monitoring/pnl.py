@@ -11,7 +11,7 @@ Audit fixes applied:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -75,7 +75,7 @@ class PnLTracker:
 
         M-06: Uses UTC date consistently.
         """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         daily = self._db.get_daily_pnl(today)
         if daily:
             self._starting_balance = daily["starting_balance"]
@@ -129,7 +129,7 @@ class PnLTracker:
         realized_today = self._db.get_today_realized_pnl()
 
         # M-11: Sum fees from today's filled trades
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_str = datetime.now(UTC).strftime("%Y-%m-%d")
         today_trades = self._db.get_trades(status="filled", limit=500)
         total_fees_today = sum(
             t.get("fees", 0.0) or 0.0
@@ -148,7 +148,7 @@ class PnLTracker:
         self._enrich_strategy_pnl(per_strategy)
 
         return PnLSnapshot(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             portfolio_value=portfolio_value,
             usdc_balance=usdc_balance,
             positions_value=positions_value,
@@ -164,7 +164,7 @@ class PnLTracker:
         """Add realized P&L and win/loss counts from today's closed positions."""
         # Use closed positions (not trades) for accurate realized P&L
         closed_positions = self._db.get_closed_positions(limit=500)
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # M-06: UTC date
+        today = datetime.now(UTC).strftime("%Y-%m-%d")  # M-06: UTC date
 
         for pos in closed_positions:
             # Only count positions closed today

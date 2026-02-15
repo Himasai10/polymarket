@@ -106,10 +106,12 @@ class RiskManager:
                     loss_pct=round(daily_loss_pct, 2),
                     limit_pct=self.config.daily_loss_limit_pct,
                 )
+                limit = self.config.daily_loss_limit_pct
                 return (
                     False,
-                    f"Daily loss limit: {daily_loss_pct:.1f}% >= {self.config.daily_loss_limit_pct}%"
-                    f" (realized={daily_realized_pnl:.2f}, unrealized={total_unrealized_pnl:.2f})",
+                    f"Daily loss limit: {daily_loss_pct:.1f}% >= {limit}%"
+                    f" (realized={daily_realized_pnl:.2f},"
+                    f" unrealized={total_unrealized_pnl:.2f})",
                 )
 
         # RISK-02: Max open positions
@@ -268,17 +270,17 @@ class RiskManager:
             p.get("current_price", p.get("entry_price", 0)) * p.get("size", 0) for p in positions
         )
 
-        return usdc + position_value
+        return float(usdc + position_value)
 
     def _get_total_unrealized_pnl(self) -> float:
         """Sum unrealized P&L across all open positions (C-11)."""
         positions = self.db.get_open_positions()
-        return sum(p.get("unrealized_pnl", 0.0) for p in positions)
+        return float(sum(p.get("unrealized_pnl", 0.0) for p in positions))
 
     def _get_strategy_exposure(self, strategy: str) -> float:
         """Get current capital deployed by a specific strategy."""
         positions = self.db.get_open_positions(strategy=strategy)
-        return sum(p.get("entry_price", 0) * p.get("size", 0) for p in positions)
+        return float(sum(p.get("entry_price", 0) * p.get("size", 0) for p in positions))
 
     def _persist_kill_switch_state(self, active: bool) -> None:
         """Persist kill switch state to DB (H-15)."""

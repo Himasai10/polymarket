@@ -114,7 +114,7 @@ class OrderManager:
                 # Wait for next signal with timeout (to check _running flag)
                 try:
                     signal = await asyncio.wait_for(self._signal_queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 await self._execute_signal(signal)

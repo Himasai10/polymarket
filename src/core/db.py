@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Generator
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
@@ -28,7 +28,7 @@ logger = structlog.get_logger()
 
 def _utcnow() -> str:
     """UTC timestamp string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Database:
@@ -347,7 +347,8 @@ class Database:
         fully closed before the exit order actually fills.
         """
         self.conn.execute(
-            "UPDATE positions SET status = 'closing', close_reason = ? WHERE id = ? AND status = 'open'",
+            "UPDATE positions SET status = 'closing', close_reason = ?"
+            " WHERE id = ? AND status = 'open'",
             (close_reason, position_id),
         )
         self._commit()
@@ -449,7 +450,7 @@ class Database:
 
     def get_today_realized_pnl(self) -> float:
         """Get today's realized P&L."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         row = self.conn.execute(
             """SELECT COALESCE(SUM(realized_pnl), 0) as total
                FROM positions WHERE status = 'closed'
@@ -587,7 +588,8 @@ class Database:
         self.conn.execute(
             """INSERT INTO bot_metadata (key, value, updated_at)
                VALUES (?, ?, ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+               updated_at = excluded.updated_at""",
             (key, value, now),
         )
         self._commit()

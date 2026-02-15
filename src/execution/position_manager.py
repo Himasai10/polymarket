@@ -8,7 +8,7 @@ Audit fixes: C-07, C-08, H-06, H-07, M-15
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -285,7 +285,7 @@ class PositionManager:
             if opened_at:
                 try:
                     opened_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-                    delta = datetime.now(timezone.utc) - opened_dt
+                    delta = datetime.now(UTC) - opened_dt
                     hours = delta.total_seconds() / 3600
                     duration = f"{hours:.1f}h"
                 except Exception:

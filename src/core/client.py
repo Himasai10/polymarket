@@ -14,9 +14,8 @@ from typing import Any
 
 import httpx
 import structlog
-
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.clob_types import ApiCreds, OrderArgs
 
 from .config import Settings, StrategyConfig
 
@@ -251,13 +250,6 @@ class PolymarketClient:
                 expiration=expiration or 0,
             )
 
-            # Map order_type to OrderType enum for post_order options
-            clob_order_type = OrderType.GTC
-            if order_type == "FOK":
-                clob_order_type = OrderType.FOK
-            elif order_type == "IOC":
-                clob_order_type = OrderType.FAK  # Fill-And-Kill is CLOB equiv of IOC
-
             # C-02 FIX: Use create_and_post_order instead of create_order
             # C-05 FIX: Run sync CLOB call in thread to avoid blocking event loop
             resp = await asyncio.to_thread(self.clob.create_and_post_order, order_args)
@@ -274,8 +266,8 @@ class PolymarketClient:
 
             result = OrderResult(
                 success=success,
-                order_id=order_id,
-                error=error,
+                order_id=order_id or "",
+                error=error or "",
                 raw=resp if isinstance(resp, dict) else {"response": str(resp)},
             )
 

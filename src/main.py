@@ -23,7 +23,8 @@ import argparse
 import asyncio
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
@@ -41,8 +42,8 @@ from .monitoring.health_server import HealthServer
 from .monitoring.logger import setup_logging
 from .monitoring.pnl import PnLTracker
 from .notifications.telegram import TelegramCommandBot, TelegramNotifier
-from .strategies.base import BaseStrategy
 from .strategies.arb_scanner import ArbScanner
+from .strategies.base import BaseStrategy
 from .strategies.copy_trader import CopyTrader
 from .strategies.stink_bidder import StinkBidder
 
@@ -133,7 +134,7 @@ class TradingBot:
         balance = self._wallet.get_usdc_balance()
         logger.info("wallet_initialized", usdc_balance=balance)
 
-        if balance < 1.0:
+        if balance < 1.0 and self._settings.is_live:
             logger.warning("low_balance", usdc_balance=balance)
 
         # 4. P&L tracker (needs db + wallet)
@@ -224,7 +225,10 @@ class TradingBot:
             if status["strategies"]:
                 lines.append("Strategies:")
                 for s in status["strategies"]:
-                    lines.append(f"  • {s['name']}: {s.get('status', 'unknown')}")
+                    strategy_status = "running" if s.get("running") else "paused"
+                    if not s.get("enabled"):
+                        strategy_status = "disabled"
+                    lines.append(f"  • {s['name']}: {strategy_status}")
             return "\n".join(lines)
 
         def get_pnl_text() -> str:
@@ -269,7 +273,7 @@ class TradingBot:
         await self.initialize()
 
         # Collect all long-running tasks
-        tasks: list[asyncio.Task] = []
+        tasks: list[asyncio.Task[None]] = []
 
         # Start HTTP health server (DEPLOY-03)
         health_server_task = asyncio.create_task(self._health_server.start())
@@ -398,7 +402,7 @@ class TradingBot:
         logger.info("shutdown_requested")
         self._shutdown_event.set()
 
-    async def get_status(self) -> dict:
+    async def get_status(self) -> dict[str, Any]:
         """Get full bot status for CLI or Telegram."""
         health = await self._health_checker.get_system_health()
         pnl = self._pnl_tracker.get_snapshot()
@@ -436,7 +440,7 @@ class TradingBot:
                     timeout=300.0,  # Every 5 minutes
                 )
                 break  # Shutdown requested
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def _health_loop(self) -> None:
@@ -481,7 +485,7 @@ class TradingBot:
                     timeout=60.0,  # Every minute
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def _daily_pnl_summary_loop(self) -> None:
@@ -489,9 +493,9 @@ class TradingBot:
         from datetime import timedelta
 
         while not self._shutdown_event.is_set():
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             # Calculate time until next midnight UTC
-            midnight = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
+            midnight = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=UTC)
             next_midnight = midnight + timedelta(days=1)
             seconds_until = (next_midnight - now).total_seconds()
 
@@ -501,7 +505,7 @@ class TradingBot:
                     timeout=seconds_until,
                 )
                 break  # Shutdown requested
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send daily P&L summary
                 if self._notifier.is_enabled:
                     summary = self._pnl_tracker.format_summary()
@@ -546,7 +550,7 @@ class TradingBot:
                     timeout=300.0,  # Check every 5 minutes
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
 
@@ -645,7 +649,7 @@ def main() -> None:
     try:
         if args.status:
             # Just print status and exit
-            status = loop.run_until_complete(_print_status(bot))
+            loop.run_until_complete(_print_status(bot))
         elif args.kill:
             # Activate kill switch: cancel all orders and halt trading
             loop.run_until_complete(_execute_kill_switch(bot))
@@ -698,10 +702,10 @@ async def _execute_kill_switch(bot: TradingBot) -> None:
 
     # Print summary
     open_positions = bot._db.get_open_positions()
-    print(f"\nKill switch activated.")
+    print("\nKill switch activated.")
     print(f"  Open positions remaining: {len(open_positions)}")
-    print(f"  Kill switch is now ON — bot will not trade until manually reset.")
-    print(f"  To resume: clear the kill switch in config or restart with fresh state.\n")
+    print("  Kill switch is now ON — bot will not trade until manually reset.")
+    print("  To resume: clear the kill switch in config or restart with fresh state.\n")
 
     # Cleanup
     await bot._client.close()

@@ -289,7 +289,7 @@ class StinkBidder(BaseStrategy):
         """Persist state on shutdown."""
         logger.info("stink_bidder_shutdown", active_bids=len(self._active_orders))
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         base = super().get_status()
         base.update(
             {

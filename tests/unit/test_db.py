@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from src.core.db import Database
 
 
@@ -274,7 +272,7 @@ class TestDatabase:
         """Can retrieve closed positions filtered by strategy."""
         pos1 = db.open_position("m1", "t1", "copy_trader", "BUY", 0.50, 100.0)
         pos2 = db.open_position("m2", "t2", "arbitrage", "BUY", 0.60, 50.0)
-        pos3 = db.open_position("m3", "t3", "copy_trader", "BUY", 0.40, 75.0)
+        pos3 = db.open_position("m3", "t3", "copy_trader", "BUY", 0.40, 75.0)  # noqa: F841
 
         db.close_position(pos1, realized_pnl=10.0, close_reason="take_profit")
         db.close_position(pos2, realized_pnl=-5.0, close_reason="stop_loss")

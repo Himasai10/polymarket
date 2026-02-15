@@ -7,9 +7,11 @@ Prevents: Pitfall 2 (proxy wallet confusion)
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
-from web3 import Web3
 from eth_account import Account
+from web3 import Web3
 
 from .config import Settings
 
@@ -41,7 +43,7 @@ class WalletManager:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._w3: Web3 | None = None
-        self._account: Account | None = None
+        self._account: Any = None
         self._funder_address: str = ""
 
     def initialize(self) -> None:
@@ -84,7 +86,7 @@ class WalletManager:
         """The address derived from the private key (used for signing orders)."""
         if self._account is None:
             raise RuntimeError("Wallet not initialized. Call initialize() first.")
-        return self._account.address
+        return self._account.address  # type: ignore[no-any-return]
 
     @property
     def funder_address(self) -> str:
@@ -93,14 +95,30 @@ class WalletManager:
             raise RuntimeError("Wallet not initialized. Call initialize() first.")
         return self._funder_address
 
+    @property
+    def is_initialized(self) -> bool:
+        """True if private key was provided and account derived."""
+        return self._account is not None and bool(self._funder_address)
+
     def get_usdc_balance(self) -> float:
         """Get USDC balance for the funder address.
 
         Returns balance in USDC (6 decimal places on Polygon).
+        In paper mode, returns the virtual paper balance.
         Addresses: CORE-03
         """
         if self._w3 is None:
             raise RuntimeError("Web3 not initialized. Call initialize() first.")
+
+        # Paper mode: return virtual balance
+        if not self.settings.is_live:
+            paper_balance = getattr(self.settings, "paper_balance_usd", 100.0)
+            logger.debug("paper_balance_used", balance=paper_balance)
+            return float(paper_balance)
+
+        if not self.is_initialized:
+            logger.debug("usdc_balance_zero", reason="wallet not initialized (no private key)")
+            return 0.0
 
         try:
             usdc_contract = self._w3.eth.contract(
@@ -115,16 +133,22 @@ class WalletManager:
             balance = raw_balance / 1e6
 
             logger.info("usdc_balance_checked", balance=balance, address=self.funder_address)
-            return balance
+            return float(balance)
 
         except Exception as e:
             logger.error("usdc_balance_check_failed", error=str(e))
             raise
 
     def get_matic_balance(self) -> float:
-        """Get MATIC (POL) balance for gas fees."""
+        """Get MATIC (POL) balance for gas fees.
+
+        Returns 0.0 if the wallet is not initialized.
+        """
         if self._w3 is None:
             raise RuntimeError("Web3 not initialized. Call initialize() first.")
+
+        if not self.is_initialized:
+            return 0.0
 
         try:
             raw_balance = self._w3.eth.get_balance(Web3.to_checksum_address(self.funder_address))

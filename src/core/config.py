@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     polymarket_host: str = "https://clob.polymarket.com"
     gamma_api_url: str = "https://gamma-api.polymarket.com"
     data_api_url: str = "https://data-api.polymarket.com"
-    ws_url: str = "wss://ws-subscriptions-clob.polymarket.com"
+    ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/"
     chain_id: int = 137  # Polygon mainnet
 
     # Telegram
@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     # Trading mode
     trading_mode: str = "paper"  # "paper" or "live"
+    paper_balance_usd: float = 100.0  # Virtual balance for paper trading
 
     # Logging
     log_level: str = "INFO"
@@ -104,7 +105,7 @@ class Settings(BaseSettings):
 
     # H-22 FIX: Validate credentials exist for live mode
     @model_validator(mode="after")
-    def validate_live_credentials(self) -> "Settings":
+    def validate_live_credentials(self) -> Settings:
         if self.trading_mode != "live":
             return self
 
@@ -203,19 +204,19 @@ class StrategyConfig:
 
     @property
     def global_config(self) -> dict[str, Any]:
-        return self._data.get("global", {})
+        return self._data.get("global", {})  # type: ignore[no-any-return]
 
     @property
     def strategies(self) -> dict[str, Any]:
-        return self._data.get("strategies", {})
+        return self._data.get("strategies", {})  # type: ignore[no-any-return]
 
     @property
     def positions(self) -> dict[str, Any]:
-        return self._data.get("positions", {})
+        return self._data.get("positions", {})  # type: ignore[no-any-return]
 
     @property
     def fees(self) -> dict[str, Any]:
-        return self._data.get("fees", {})
+        return self._data.get("fees", {})  # type: ignore[no-any-return]
 
     # Global settings with defaults
     @property
@@ -264,7 +265,7 @@ class StrategyConfig:
         strategy = self.get_strategy(name)
         if strategy is None:
             return False
-        return strategy.get("enabled", False)
+        return strategy.get("enabled", False)  # type: ignore[no-any-return]
 
     def get_strategy_allocation(self, name: str) -> float:
         """Get allocation percentage for a strategy."""
@@ -275,7 +276,7 @@ class StrategyConfig:
 
     def get_take_profit_tiers(self) -> list[dict[str, float]]:
         """Get take-profit tier configuration."""
-        return self.positions.get("take_profit", [])
+        return self.positions.get("take_profit", [])  # type: ignore[no-any-return]
 
     @property
     def stop_loss_pct(self) -> float:
@@ -306,7 +307,7 @@ class WalletConfig:
 
     @property
     def wallets(self) -> list[dict[str, Any]]:
-        return self._data.get("wallets", [])
+        return self._data.get("wallets", [])  # type: ignore[no-any-return]
 
     @property
     def enabled_wallets(self) -> list[dict[str, Any]]:

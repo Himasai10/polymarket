@@ -15,12 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections import defaultdict
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 import structlog
 import websockets
-from websockets.exceptions import ConnectionClosed
 
 from .config import Settings
 
@@ -148,6 +147,12 @@ class WebSocketManager:
 
     async def _connect_and_listen(self) -> None:
         """Connect to WebSocket and process messages."""
+        # Skip WebSocket in paper mode without wallet - can't authenticate
+        if not self._settings.is_live:
+            logger.info("ws_skipped_paper_mode", reason="WebSocket requires wallet auth")
+            self._running = False
+            return
+
         logger.info("ws_connecting", url=self.ws_url)
 
         # H-20 FIX: Build extra headers with API key if available
@@ -157,7 +162,7 @@ class WebSocketManager:
             self.ws_url,
             ping_interval=20,
             ping_timeout=10,
-            extra_headers=extra_headers if extra_headers else None,
+            additional_headers=extra_headers if extra_headers else None,
         ) as ws:
             self._ws = ws
             self._reconnect_delay = 1.0  # Reset backoff on successful connect

@@ -1,7 +1,8 @@
 """Unit tests for StinkBidder strategy (Phase 4)."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
 
 from src.core.client import Market
 from src.core.config import StrategyConfig
